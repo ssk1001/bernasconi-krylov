@@ -9,9 +9,10 @@ using namespace rapidcsv;
 
 int main(){
     auto start = std::chrono::high_resolution_clock::now();
-    string filename = "./cache/";
+    string filename = "";
     int n;
     cin>>n;
+    filename.append("data_raw/classical/exhaustive/");
     filename.append(to_string(n));
     filename.append(".csv");
     if(filesystem::exists(filename)){
