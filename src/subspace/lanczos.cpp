@@ -37,7 +37,16 @@ vector<unique_ptr<mutex>> locks;
 // ============================================================
 
 void initializeCache(int num_threads, size_t max_cache_entries) {
+
     constexpr size_t BUCKETS_PER_THREAD = 64;
+
+    if (num_threads <= 0) {
+        num_threads = 1;
+    }
+
+    if (max_cache_entries == 0) {
+        max_cache_entries = 1;
+    }
 
     // Desired number of independently lockable buckets.
     size_t target_buckets = min(
@@ -49,17 +58,19 @@ void initializeCache(int num_threads, size_t max_cache_entries) {
     // divides max_cache_entries exactly.
     CACHE_SIZE = 1;
 
-    for (size_t candidate = target_buckets;
-         candidate > 0;
-         --candidate) {
-
+    for (
+        size_t candidate = target_buckets;
+        candidate > 0;
+        --candidate
+    ) {
         if (max_cache_entries % candidate == 0) {
             CACHE_SIZE = candidate;
             break;
         }
     }
 
-    MAX_BUCKET_SIZE = max_cache_entries / CACHE_SIZE;
+    MAX_BUCKET_SIZE =
+        max_cache_entries / CACHE_SIZE;
 
     cache.clear();
     cache.resize(CACHE_SIZE);
@@ -98,9 +109,9 @@ void initializeCache(int num_threads, size_t max_cache_entries) {
 // ============================================================
 
 pair<u_int64_t, vector<int>> cacheSearch(u_int64_t mask) {
+
     // Empty vector means cache miss.
     pair<u_int64_t, vector<int>> ans = {0, {}};
-
 
     // --------------------------------------------------------
     // Search exact mask
@@ -124,12 +135,12 @@ pair<u_int64_t, vector<int>> cacheSearch(u_int64_t mask) {
         }
     }
 
-
     // --------------------------------------------------------
     // Search Hamming-distance-1 neighbors
     // --------------------------------------------------------
 
     for (int i = 0; i < n; i++) {
+
         u_int64_t neighbor =
             mask ^ (1ULL << i);
 
@@ -169,6 +180,7 @@ void cacheInsert(
     u_int64_t mask,
     vector<int>&& Ck
 ) {
+
     size_t bucket =
         static_cast<size_t>(mask % CACHE_SIZE);
 
@@ -192,6 +204,7 @@ void cacheInsert(
 // ============================================================
 
 void clearCache() {
+
     for (size_t i = 0; i < CACHE_SIZE; i++) {
         lock_guard<mutex> lock(*locks[i]);
         cache[i].clear();
@@ -208,7 +221,6 @@ int calculateEnergy(u_int64_t mask) {
     auto cacheFind = cacheSearch(mask);
 
     int energy = 0;
-
 
     // ========================================================
     // Complete cache miss
@@ -273,7 +285,6 @@ int calculateEnergy(u_int64_t mask) {
     vector<int> Ck =
         move(cacheFind.second);
 
-
     // Find the flipped spin.
     int ind = -1;
 
@@ -290,7 +301,6 @@ int calculateEnergy(u_int64_t mask) {
     }
 
     assert(ind != -1);
-
 
     // Update correlations affected by the flipped spin.
     bool flipped_spin =
@@ -315,12 +325,10 @@ int calculateEnergy(u_int64_t mask) {
         }
     }
 
-
     // Calculate energy from updated correlations.
     for (int i = 0; i < n - 1; i++) {
         energy += Ck[i] * Ck[i];
     }
-
 
     cacheInsert(mask, move(Ck));
 
@@ -332,27 +340,70 @@ int calculateEnergy(u_int64_t mask) {
 // Main
 // ============================================================
 
-int main() {
+int main(int argc, char* argv[]) {
 
-    // Input:
-    //
-    // n
-    // initial_g
-    // num_threads
-    // max_cache_entries
-    //
-    // Example:
-    //
-    // 20 0.0 32 800000
-    //
+    // Defaults.
+    constexpr size_t DEFAULT_MAX_CACHE_ENTRIES = 800000;
 
-    int num_threads;
-    size_t max_cache_entries;
+    int num_threads =
+        omp_get_max_threads();
 
-    cin >> n
-        >> g
-        >> num_threads
-        >> max_cache_entries;
+    size_t max_cache_entries =
+        DEFAULT_MAX_CACHE_ENTRIES;
+
+
+    // --------------------------------------------------------
+    // Input
+    //
+    // Usage:
+    //
+    // ./lanczos n
+    // ./lanczos n num_threads
+    // ./lanczos n num_threads max_cache_entries
+    //
+    // Examples:
+    //
+    // ./lanczos 10
+    // ./lanczos 10 4
+    // ./lanczos 10 4 800000
+    // --------------------------------------------------------
+
+    if (argc < 2 || argc > 4) {
+
+        cerr
+            << "Usage: " << argv[0]
+            << " <n> [num_threads] [max_cache_entries]\n";
+
+        cerr
+            << "Example: "
+            << argv[0]
+            << " 10 4 800000\n";
+
+        return 1;
+    }
+
+    try {
+
+        n = stoi(argv[1]);
+
+        if (argc >= 3) {
+            num_threads = stoi(argv[2]);
+        }
+
+        if (argc >= 4) {
+            max_cache_entries =
+                stoull(argv[3]);
+        }
+
+    } catch (const exception& e) {
+
+        cerr
+            << "Error parsing arguments: "
+            << e.what()
+            << '\n';
+
+        return 1;
+    }
 
 
     // --------------------------------------------------------
@@ -360,20 +411,26 @@ int main() {
     // --------------------------------------------------------
 
     if (n < 2 || n >= 63) {
+
         cerr
             << "Error: n must satisfy 2 <= n < 63\n";
+
         return 1;
     }
 
     if (num_threads <= 0) {
+
         cerr
             << "Error: number of threads must be positive\n";
+
         return 1;
     }
 
     if (max_cache_entries == 0) {
+
         cerr
             << "Error: maximum cache entries must be positive\n";
+
         return 1;
     }
 
@@ -423,7 +480,6 @@ int main() {
                 0.0
             );
 
-
             #pragma omp parallel for schedule(static)
             for (
                 int64_t ii = 0;
@@ -434,13 +490,11 @@ int main() {
                 u_int64_t i =
                     static_cast<u_int64_t>(ii);
 
-
                 // Diagonal Bernasconi energy term.
                 double value =
                     static_cast<double>(
                         calculateEnergy(i)
                     ) * in[i];
-
 
                 // Transverse-field term.
                 for (int j = 0; j < n; j++) {
@@ -450,7 +504,6 @@ int main() {
 
                     value -= g * in[nxt];
                 }
-
 
                 // Only this iteration writes out[i].
                 out[i] = value;
@@ -470,15 +523,16 @@ int main() {
     ofstream file(filename);
 
     if (!file.is_open()) {
+
         cerr
             << "Failed to open output file: "
-            << filename << '\n';
+            << filename
+            << '\n';
+
         return 1;
     }
 
-
     file << fixed << setprecision(16);
-
     file << "g,E0,E1,Delta\n";
 
 
@@ -568,14 +622,10 @@ int main() {
     }
 
 
-    file.close();
-
-
     cout
         << "\nResults saved to "
         << filename
         << '\n';
-
 
     return 0;
 }
