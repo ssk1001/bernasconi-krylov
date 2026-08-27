@@ -516,7 +516,7 @@ int main(int argc, char* argv[]) {
     // --------------------------------------------------------
 
     string filename =
-        "../../data_raw/spectral_gap/gap_N"
+        "data_raw/spectral_gap/gap_N"
         + to_string(n)
         + ".csv";
 
