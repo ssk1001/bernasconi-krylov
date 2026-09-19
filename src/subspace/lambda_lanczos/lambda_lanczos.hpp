@@ -199,11 +199,12 @@ class LambdaLanczos {
    */
   LambdaLanczos(std::function<void(const std::vector<T>&, std::vector<T>&)> mv_mul,
                 size_t matrix_size,
+                size_t matrix_iteration,
                 bool find_maximum,
                 size_t num_eigs)
       : mv_mul(mv_mul),
         matrix_size(matrix_size),
-        max_iteration(matrix_size),
+        max_iteration(matrix_iteration),
         find_maximum(find_maximum),
         num_eigs(num_eigs) {}
 

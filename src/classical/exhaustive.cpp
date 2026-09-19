@@ -70,12 +70,29 @@ int main(){
             new_data[new_data.size() - 1] = E;
             doc.SetRow(msk, new_data);
         }
+        doc.Save(filename);
         vector<long long> energies = doc.GetColumn<long long>("E(s)");
         int mask = (min_element(energies.begin(), energies.end())) - energies.begin();
         cout<<"Minimum energy config mask: ";
         cout<<mask<<endl;
         cout<<"Minimum energy = "<<energies[mask]<<endl;
-        doc.Save(filename);
+        string energyfile = "data_raw/classical/exhaustive/min_energies.csv";
+        if(filesystem::exists(energyfile)){
+            Document newdoc(energyfile, LabelParams(0, -1));
+            if(newdoc.GetRowCount() < n){
+                newdoc.SetRow(newdoc.GetRowCount(), vector<long long>({n, energies[mask], mask}));
+            }
+            newdoc.Save();
+        }else{
+            Document newdoc("", LabelParams(-1, -1));
+            newdoc.InsertColumn(newdoc.GetColumnCount(), vector<string>({"Mask"}));
+            newdoc.InsertColumn(newdoc.GetColumnCount(), vector<string>({"Energy"}));
+            newdoc.InsertColumn(newdoc.GetColumnCount(), vector<string>({"N"}));
+            // newdoc.InsertColumn(newdoc.GetColumnCount(), {}, "energy");
+            // newdoc.InsertColumn(newdoc.GetColumnCount(), {}, "mask");
+            newdoc.InsertRow(newdoc.GetRowCount(), vector<long long>({n, energies[mask], mask}));
+            newdoc.Save(energyfile);
+        }
     }
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double, std::milli> duration = end - start;
