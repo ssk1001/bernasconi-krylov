@@ -1,15 +1,41 @@
+#include "sampler.cuh"
 #include <cuda_runtime.h>
 #include <cuComplex.h>
 #include <custatevec.h>
-#include <unordered_map>
 #include <random>
-#include <vector>
-#include <cmath>
-#include "sampler.cuh"
+#include <iostream>
 
-// CUDA kernel to apply the diagonal LABS energy phase directly to state vector amplitudes
-__global__ void apply_labs_phase_kernel(
+// Precompute energies once to save O(N^3) work inside the evolution loop
+__global__ void precompute_labs_energies_kernel(
+    double* d_energies, 
+    uint64_t num_states, 
+    size_t n) 
+{
+    uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= num_states) return;
+
+    double H_B = (n * (n - 1)) / 2.0;
+    for (size_t k = 1; k < n; ++k) {
+        double sum_pairs = 0.0;
+        for (size_t i = 0; i < n - k; ++i) {
+            for (size_t j = i + 1; j < n - k; ++j) {
+                int bit_i   = (idx >> i) & 1ULL;
+                int bit_ik  = (idx >> (i + k)) & 1ULL;
+                int bit_j   = (idx >> j) & 1ULL;
+                int bit_jk  = (idx >> (j + k)) & 1ULL;
+                int xor_sum = bit_i ^ bit_ik ^ bit_j ^ bit_jk;
+                sum_pairs += (xor_sum == 0) ? 1.0 : -1.0;
+            }
+        }
+        H_B += 2.0 * sum_pairs;
+    }
+    d_energies[idx] = H_B;
+}
+
+// O(1) Phase Kernel using precomputed energies
+__global__ void apply_precomputed_phase_kernel(
     cuDoubleComplex* d_state, 
+    const double* d_energies,
     uint64_t num_states, 
     size_t n, 
     double dt) 
@@ -17,34 +43,11 @@ __global__ void apply_labs_phase_kernel(
     uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_states) return;
 
-    // Compute LABS energy: E_B = N(N-1)/2 + 2 * sum_k (C_k)^2
-    double H_B = (n * (n - 1)) / 2.0;
-
-    for (size_t k = 1; k < n; ++k) {
-        double sum_pairs = 0.0;
-        for (size_t i = 0; i < n - k; ++i) {
-            for (size_t j = i + 1; j < n - k; ++j) {
-                // Extract bits (0-indexed). Z = 1 if bit is 0, -1 if bit is 1.
-                int bit_i   = (idx >> i) & 1ULL;
-                int bit_ik  = (idx >> (i + k)) & 1ULL;
-                int bit_j   = (idx >> j) & 1ULL;
-                int bit_jk  = (idx >> (j + k)) & 1ULL;
-
-                // Z_i * Z_{i+k} * Z_j * Z_{j+k} equivalent to XOR parity
-                int xor_sum = bit_i ^ bit_ik ^ bit_j ^ bit_jk;
-                sum_pairs += (xor_sum == 0) ? 1.0 : -1.0;
-            }
-        }
-        H_B += 2.0 * sum_pairs;
-    }
-
-    // Calculate phase shift: theta = - (dt / N) * H_B
-    double theta = - (dt / (double)n) * H_B;
+    double theta = - (dt / (double)n) * d_energies[idx];
     
     cuDoubleComplex phase = make_cuDoubleComplex(cos(theta), sin(theta));
     cuDoubleComplex amp = d_state[idx];
     
-    // Apply scalar multiplication to the amplitude
     d_state[idx] = make_cuDoubleComplex(
         amp.x * phase.x - amp.y * phase.y, 
         amp.x * phase.y + amp.y * phase.x
@@ -58,28 +61,29 @@ std::vector<SpinState> CuStateVecSampler::generate_subspace(
 {
     uint64_t num_states = 1ULL << config.n;
     size_t state_size_bytes = num_states * sizeof(cuDoubleComplex);
+    size_t energy_size_bytes = num_states * sizeof(double);
 
-    // Allocate memory and handles ONCE
     cuDoubleComplex* d_state = nullptr;
+    double* d_energies = nullptr;
     cudaMalloc(&d_state, state_size_bytes);
+    cudaMalloc(&d_energies, energy_size_bytes);
+
+    // Precompute energies
+    int threads = 256;
+    int blocks = (num_states + threads - 1) / threads;
+    precompute_labs_energies_kernel<<<blocks, threads>>>(d_energies, num_states, config.n);
+    cudaDeviceSynchronize();
 
     custatevecHandle_t handle;
     custatevecCreate(&handle);
 
-    // Global map to aggregate samples across all seeds
     std::unordered_map<SpinState, size_t, SpinStateHash> global_unique_samples;
-    
-    std::random_device rd;
-    std::mt19937 rng(rd()); 
+    std::mt19937 rng(42); // Fixed seed for reproducibility
     std::uniform_real_distribution<double> dist(0.0, 1.0);
 
-    // Process each steepest descent seed independently
     for (const auto& seed_state : seed_states) {
-        
-        // Reset state to all zeros
         cudaMemset(d_state, 0, state_size_bytes);
 
-        // Decode seed and set amplitude |s0> = 1.0
         uint64_t seed_idx = 0;
         for (size_t i = 0; i < config.n; ++i) {
             if (seed_state.get_spin(i) == -1) { 
@@ -89,15 +93,10 @@ std::vector<SpinState> CuStateVecSampler::generate_subspace(
         cuDoubleComplex one = make_cuDoubleComplex(1.0, 0.0);
         cudaMemcpy(d_state + seed_idx, &one, sizeof(cuDoubleComplex), cudaMemcpyHostToDevice);
 
-        // Fixed-g Real-Time Evolution Loop
         for (size_t step = 0; step < config.k_steps; ++step) {
-            
             // A. Diagonal Phase Evolution
-            int threads_per_block = 256;
-            int blocks = (num_states + threads_per_block - 1) / threads_per_block;
-            apply_labs_phase_kernel<<<blocks, threads_per_block>>>(d_state, num_states, config.n, config.dt);
-            cudaDeviceSynchronize();
-
+            apply_precomputed_phase_kernel<<<blocks, threads>>>(d_state, d_energies, num_states, config.n, config.dt);
+            
             // B. Transverse Field Evolution
             double rx_angle = -2.0 * config.g * config.dt;
             cuDoubleComplex rx_matrix[4] = {
@@ -115,7 +114,7 @@ std::vector<SpinState> CuStateVecSampler::generate_subspace(
                 );
             }
 
-            // C. Batched Measurement Sampling
+            // C. Sampling
             custatevecSamplerDescriptor_t sampler;
             size_t sampler_workspace_size = 0;
             custatevecSamplerCreate(
@@ -137,7 +136,6 @@ std::vector<SpinState> CuStateVecSampler::generate_subspace(
             );
             custatevecSamplerDestroy(sampler);
 
-            // D. Aggregate into the global map
             for (auto idx : sampled_indices) {
                 SpinState sampled_state;
                 sampled_state.num_bits = config.n;
@@ -150,7 +148,6 @@ std::vector<SpinState> CuStateVecSampler::generate_subspace(
         }
     }
 
-    // 4. One-Spin-Flip Augmentation for High-Weight Strings (across ALL seeds)
     std::vector<SpinState> final_subspace;
     for (const auto& [state, count] : global_unique_samples) {
         final_subspace.push_back(state);
@@ -166,5 +163,6 @@ std::vector<SpinState> CuStateVecSampler::generate_subspace(
 
     custatevecDestroy(handle);
     cudaFree(d_state);
+    cudaFree(d_energies);
     return final_subspace;
 }

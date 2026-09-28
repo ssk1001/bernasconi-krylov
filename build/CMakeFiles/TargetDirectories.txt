@@ -1,3 +1,0 @@
-/home/shaashwat/Desktop/bernasconi-krylov/build/CMakeFiles/krylov_sampler.dir
-/home/shaashwat/Desktop/bernasconi-krylov/build/CMakeFiles/edit_cache.dir
-/home/shaashwat/Desktop/bernasconi-krylov/build/CMakeFiles/rebuild_cache.dir
