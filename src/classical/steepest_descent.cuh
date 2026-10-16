@@ -5,25 +5,14 @@
 #include <limits>
 #include "../labs_energy/labs_energy.hpp"
 
-#define MAX_LOG_EVENTS 1000
 #define MAX_BITS_SUPPORT 512 // Maximum supported bits for local C_k register storage
-
-struct LogEvent {
-    long long timestamp_cycles;
-    long long energy;
-    int thread_id;
-};
 
 struct DescentResult {
     SpinState best_state;
     long long best_energy; 
     std::vector<SpinState> all_states;
     std::vector<long long> all_energies;
-};
-
-struct DeviceLogBuffer {
-    int count;
-    LogEvent events[MAX_LOG_EVENTS];
+    std::vector<long long> all_evals;
 };
 
 __global__ void multi_start_descent_kernel(
@@ -31,11 +20,8 @@ __global__ void multi_start_descent_kernel(
     size_t num_words,
     int num_starts, 
     unsigned long long* d_states, 
-    unsigned long long* d_best_neighbors,
-    DeviceLogBuffer* d_log_buffer, 
-    long long* d_global_best_energy,
-    unsigned long long* d_global_best_state,
-    long long* d_final_energies) 
+    long long* d_final_energies,
+    long long* d_eval_counts) 
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= num_starts) return;
@@ -65,8 +51,10 @@ __global__ void multi_start_descent_kernel(
         local_energy += C[k] * C[k];
     }
 
+    long long evals = 1; // 1 initial full evaluation
     bool improved = true;
     while (improved) {
+        evals += num_bits; // 1 evaluation per 1-flip neighbor tested
         improved = false;
         long long best_neighbor_energy = local_energy;
         size_t best_bit_to_flip = 0;
@@ -140,30 +128,13 @@ __global__ void multi_start_descent_kernel(
 
             my_state[word_idx] ^= (1ULL << bit_idx);
             local_energy = best_neighbor_energy;
-
-            long long current_global = *d_global_best_energy;
-
-            if (local_energy < current_global) {
-                long long old_global = atomicMin((unsigned long long*)d_global_best_energy, 
-                                                 (unsigned long long)local_energy);
-                
-                if (local_energy < old_global) {
-                    for (size_t w = 0; w < num_words; ++w) {
-                        d_global_best_state[w] = my_state[w];
-                    }
-
-                    int log_idx = atomicAdd(&d_log_buffer->count, 1);
-                    if (log_idx < MAX_LOG_EVENTS) {
-                        d_log_buffer->events[log_idx].timestamp_cycles = clock64();
-                        d_log_buffer->events[log_idx].energy = local_energy;
-                        d_log_buffer->events[log_idx].thread_id = tid;
-                    }
-                }
-            }
         }
     }
     
     d_final_energies[tid] = local_energy;
+    if (d_eval_counts) {
+        d_eval_counts[tid] = evals;
+    }
 }
 
 DescentResult multi_start_steepest_descent(size_t n, size_t num_starts, SpinCache& cache) {
@@ -182,66 +153,64 @@ DescentResult multi_start_steepest_descent(size_t n, size_t num_starts, SpinCach
     }
 
     unsigned long long* d_states;
-    unsigned long long* d_best_neighbors;
-    DeviceLogBuffer* d_log_buffer;
-    long long* d_global_best_energy;
-    unsigned long long* d_global_best_state;
     long long* d_final_energies;
+    long long* d_eval_counts;
 
     cudaMalloc(&d_states, num_starts * num_words * sizeof(unsigned long long));
-    cudaMalloc(&d_best_neighbors, num_starts * num_words * sizeof(unsigned long long));
-    cudaMalloc(&d_log_buffer, sizeof(DeviceLogBuffer));
-    cudaMalloc(&d_global_best_energy, sizeof(long long));
-    cudaMalloc(&d_global_best_state, num_words * sizeof(unsigned long long));
     cudaMalloc(&d_final_energies, num_starts * sizeof(long long));
+    cudaMalloc(&d_eval_counts, num_starts * sizeof(long long));
 
     cudaMemcpy(d_states, h_start_states.data(), h_start_states.size() * sizeof(unsigned long long), cudaMemcpyHostToDevice);
-    
-    cudaMemset(d_log_buffer, 0, sizeof(DeviceLogBuffer));
-    long long init_max = std::numeric_limits<long long>::max();
-    cudaMemcpy(d_global_best_energy, &init_max, sizeof(long long), cudaMemcpyHostToDevice);
 
     int threadsPerBlock = 256;
     int blocksPerGrid = (num_starts + threadsPerBlock - 1) / threadsPerBlock;
     
     multi_start_descent_kernel<<<blocksPerGrid, threadsPerBlock>>>(
-        n, num_words, num_starts, d_states, d_best_neighbors, 
-        d_log_buffer, d_global_best_energy, d_global_best_state, d_final_energies
+        n, num_words, num_starts, d_states, d_final_energies, d_eval_counts
     );
     
     cudaDeviceSynchronize();
 
-    long long h_final_energy;
-    std::vector<uint64_t> h_final_state(num_words);
     std::vector<uint64_t> h_all_final_states(num_starts * num_words);
     std::vector<long long> h_all_final_energies(num_starts);
+    std::vector<long long> h_all_eval_counts(num_starts);
     
-    cudaMemcpy(&h_final_energy, d_global_best_energy, sizeof(long long), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_final_state.data(), d_global_best_state, num_words * sizeof(unsigned long long), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_all_final_states.data(), d_states, num_starts * num_words * sizeof(unsigned long long), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_all_final_energies.data(), d_final_energies, num_starts * sizeof(long long), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_all_eval_counts.data(), d_eval_counts, num_starts * sizeof(long long), cudaMemcpyDeviceToHost);
 
     cudaFree(d_states);
-    cudaFree(d_best_neighbors);
-    cudaFree(d_log_buffer);
-    cudaFree(d_global_best_energy);
-    cudaFree(d_global_best_state);
     cudaFree(d_final_energies);
+    cudaFree(d_eval_counts);
 
+    long long true_best_energy = std::numeric_limits<long long>::max();
+    int best_start_idx = -1;
+    
+    for (int i = 0; i < num_starts; ++i) {
+        if (h_all_final_energies[i] < true_best_energy) {
+            true_best_energy = h_all_final_energies[i];
+            best_start_idx = i;
+        }
+    }
     DescentResult final_result;
-    final_result.best_energy = h_final_energy;
+    final_result.best_energy = true_best_energy;
     final_result.best_state.num_bits = n;
-    final_result.best_state.bits = h_final_state;
+    final_result.best_state.bits.assign(
+        h_all_final_states.begin() + best_start_idx * num_words, 
+        h_all_final_states.begin() + (best_start_idx + 1) * num_words
+    );
+    final_result.all_evals = std::move(h_all_eval_counts);
+    final_result.all_energies = std::move(h_all_final_energies);
+    final_result.all_states.reserve(num_starts);
     
     for (int i = 0; i < num_starts; ++i) {
         SpinState s;
         s.num_bits = n;
-        s.bits = std::vector<uint64_t>(
+        s.bits.assign(
             h_all_final_states.begin() + i * num_words, 
             h_all_final_states.begin() + (i + 1) * num_words
         );
-        final_result.all_states.push_back(s);
-        final_result.all_energies.push_back(h_all_final_energies[i]);
+        final_result.all_states.push_back(std::move(s));
     }
 
     return final_result;

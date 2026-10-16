@@ -6,11 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Optimize for performance
 set(CMAKE_CUDA_ARCHITECTURES "native")
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 --use_fast_math")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 --use_fast_math --expt-relaxed-constexpr")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall")
+
+# Explicitly add Colab's CUDA library path to prevent linker issues
+link_directories(/usr/local/cuda/lib64)
 
 # Find CUDA Toolkit (Provides cuBLAS and cuSOLVER)
 find_package(CUDAToolkit REQUIRED)
+
+# Find Eigen3
+find_package(Eigen3 REQUIRED)
 
 # Find cuStateVec (cuQuantum SDK)
 find_library(CUSTATEVEC_LIB custatevec
@@ -37,6 +43,8 @@ target_include_directories(fixed_g_custatevec PRIVATE
     ${CMAKE_SOURCE_DIR}/src/sampling
     ${CMAKE_SOURCE_DIR}/src/subspace
     ${CMAKE_SOURCE_DIR}/src/exact
+    ${CMAKE_SOURCE_DIR}/src/classical
+    ${CMAKE_SOURCE_DIR}/src/baselines
 )
 
 # Add cuQuantum headers if CUQUANTUM_ROOT is provided
@@ -46,9 +54,40 @@ elseif(DEFINED CUQUANTUM_ROOT)
     target_include_directories(fixed_g_custatevec PRIVATE ${CUQUANTUM_ROOT}/include)
 endif()
 
-# Link libraries
+# Link libraries (ORDER MATTERS: cuStateVec must come BEFORE cuBLAS/cuSOLVER)
 target_link_libraries(fixed_g_custatevec PRIVATE 
-    CUDA::cusolver 
-    CUDA::cublas 
     ${CUSTATEVEC_LIB}
+    CUDA::cublas 
+    CUDA::cusolver 
+    Eigen3::Eigen
 )
+target_link_options(fixed_g_custatevec PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
+
+# Probability dynamics & g-scan executable
+add_executable(probability_dynamics 
+    src/probability_dynamics.cu
+    src/sampling/custatevec_sampler.cu
+)
+
+target_include_directories(probability_dynamics PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/labs_energy
+    ${CMAKE_SOURCE_DIR}/src/sampling
+    ${CMAKE_SOURCE_DIR}/src/subspace
+    ${CMAKE_SOURCE_DIR}/src/exact
+    ${CMAKE_SOURCE_DIR}/src/classical
+)
+
+if(DEFINED ENV{CUQUANTUM_ROOT})
+    target_include_directories(probability_dynamics PRIVATE $ENV{CUQUANTUM_ROOT}/include)
+elseif(DEFINED CUQUANTUM_ROOT)
+    target_include_directories(probability_dynamics PRIVATE ${CUQUANTUM_ROOT}/include)
+endif()
+
+target_link_libraries(probability_dynamics PRIVATE 
+    ${CUSTATEVEC_LIB}
+    CUDA::cublas 
+    CUDA::cusolver 
+    Eigen3::Eigen
+)
+target_link_options(probability_dynamics PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")

@@ -17,6 +17,11 @@ struct SpinState {
         return num_bits == other.num_bits && bits == other.bits;
     }
 
+    bool operator<(const SpinState& other) const {
+        if (num_bits != other.num_bits) return num_bits < other.num_bits;
+        return bits < other.bits;
+    }
+
     inline int get_spin(size_t index) const {
         size_t word_idx = index / 64;
         size_t bit_idx = index % 64;

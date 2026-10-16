@@ -29,6 +29,7 @@
 // ---------------------------------------------------------
 // Type Traits 
 // ---------------------------------------------------------
+// ... (Keep CudaTraits<double> and CudaTraits<float> exactly as they were in your original code) ...
 template <typename T> struct CudaTraits;
 
 template <> struct CudaTraits<double> {
@@ -71,25 +72,41 @@ __global__ void fullspace_matvec_kernel(int N, int num_bits, ScalarType g, const
 }
 
 template <typename ScalarType>
-__global__ void subspace_matvec_kernel(int N, int num_bits, ScalarType g, const uint64_t* basis_bits, const ScalarType* diag, const ScalarType* x, ScalarType* y) {
+__global__ void subspace_matvec_kernel(int N, int num_bits, int num_words, ScalarType g, const uint64_t* basis_bits, const ScalarType* diag, const ScalarType* x, ScalarType* y) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < N) {
-        uint64_t my_bits = basis_bits[i];
         ScalarType yi = diag[i] * x[i];
         
         for (int j = 0; j < num_bits; ++j) {
-            uint64_t flipped = my_bits ^ (1ULL << j);
+            int target_word = j / 64;
+            uint64_t target_mask = 1ULL << (j % 64);
             
-            // In-kernel binary search 
+            // In-kernel binary search over multi-word states
             int left = 0, right = N - 1;
             while (left <= right) {
                 int mid = left + (right - left) / 2;
-                uint64_t mid_val = basis_bits[mid];
                 
-                if (mid_val == flipped) {
+                int cmp = 0; // 0 = match, -1 = mid is smaller, 1 = mid is larger
+                
+                // Compare word by word to emulate std::vector lexicographical sorting
+                for (int w = 0; w < num_words; ++w) {
+                    uint64_t my_w = basis_bits[i * num_words + w]; 
+                    if (w == target_word) {
+                        my_w ^= target_mask; // Apply bit-flip on the fly
+                    }
+                    
+                    uint64_t mid_w = basis_bits[mid * num_words + w];
+                    
+                    if (mid_w != my_w) {
+                        cmp = (mid_w < my_w) ? -1 : 1;
+                        break;
+                    }
+                }
+                
+                if (cmp == 0) {
                     yi -= g * x[mid];
                     break;
-                } else if (mid_val < flipped) {
+                } else if (cmp < 0) {
                     left = mid + 1;
                 } else {
                     right = mid - 1;
@@ -116,30 +133,21 @@ public:
     }
 
     static Eigenpair compute_ground_state(size_t num_bits, ScalarType g) {
+        if (num_bits > 30) {
+            throw std::runtime_error("Fullspace solver exceeds memory bounds for N > 30. Use subspace methods instead.");
+        }
         return solve_fullspace_internal(num_bits, g);
     }
 
 private:
-    // Helper to extract bitmask representation for sorting and binary searching
-    // Adjust based on how SpinState internally stores its bits.
-    static uint64_t extract_bits(const StateType& state) {
-        // Assuming your SpinState struct contains a std::vector<uint64_t> or similar structure 
-        // based on your initialization pattern {ctx.num_bits, {val}}.
-        // Example: return state.bits[0];
-        
-        // If SpinState has a method to get raw bits:
-        // return state.to_uint64(); 
-        
-        // Temporary placeholder - adapt to actual SpinState struct fields
-        return state.bits[0]; 
-    }
 
     struct SubspaceSortData {
-        uint64_t bits;
+        std::vector<uint64_t> bits;
         ScalarType energy;
         int orig_index;
         
         bool operator<(const SubspaceSortData& other) const {
+            // std::vector natively performs left-to-right lexicographical comparison
             return bits < other.bits;
         }
     };
@@ -147,26 +155,31 @@ private:
     static Eigenpair solve_subspace_internal(const std::vector<StateType>& basis, ScalarType g) {
         int N = basis.size();
         if (N == 0) return {0.0, {}};
+        
         int num_bits = basis[0].num_bits;
+        int num_words = basis[0].bits.size(); // Extracted directly from N > 64 representation
+        
         SpinCache sc;
 
-        // 1. Precompute energies and sort basis on CPU for O(log N) GPU binary search
+        // 1. Precompute energies and sort basis on CPU
         std::vector<SubspaceSortData> host_data(N);
         for (int i = 0; i < N; ++i) {
-            host_data[i].bits = extract_bits(basis[i]);
+            host_data[i].bits = basis[i].bits;
             host_data[i].energy = static_cast<ScalarType>(SpinLib::get_energy(sc, basis[i])) / static_cast<ScalarType>(num_bits);
             host_data[i].orig_index = i;
         }
 
         std::sort(host_data.begin(), host_data.end());
 
-        // Extract contiguous arrays for device transfer
-        std::vector<uint64_t> h_basis_bits(N);
+        // Extract contiguous 1D arrays for multi-word device transfer
+        std::vector<uint64_t> h_basis_bits(N * num_words);
         std::vector<ScalarType> h_diag(N);
         std::vector<int> h_orig_idx(N);
 
         for (int i = 0; i < N; ++i) {
-            h_basis_bits[i] = host_data[i].bits;
+            for (int w = 0; w < num_words; ++w) {
+                h_basis_bits[i * num_words + w] = host_data[i].bits[w];
+            }
             h_diag[i] = host_data[i].energy;
             h_orig_idx[i] = host_data[i].orig_index;
         }
@@ -174,16 +187,17 @@ private:
         // 2. Setup Device Memory
         uint64_t* d_basis_bits;
         ScalarType* d_diag;
-        CHECK_CUDA(cudaMalloc(&d_basis_bits, N * sizeof(uint64_t)));
+        CHECK_CUDA(cudaMalloc(&d_basis_bits, N * num_words * sizeof(uint64_t)));
         CHECK_CUDA(cudaMalloc(&d_diag, N * sizeof(ScalarType)));
         
-        CHECK_CUDA(cudaMemcpy(d_basis_bits, h_basis_bits.data(), N * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_basis_bits, h_basis_bits.data(), N * num_words * sizeof(uint64_t), cudaMemcpyHostToDevice));
         CHECK_CUDA(cudaMemcpy(d_diag, h_diag.data(), N * sizeof(ScalarType), cudaMemcpyHostToDevice));
 
         auto matvec = [&](const ScalarType* d_x, ScalarType* d_y) {
             int threads = 256;
             int blocks = (N + threads - 1) / threads;
-            subspace_matvec_kernel<<<blocks, threads>>>(N, num_bits, g, d_basis_bits, d_diag, d_x, d_y);
+            // Pass num_words to the updated kernel
+            subspace_matvec_kernel<<<blocks, threads>>>(N, num_bits, num_words, g, d_basis_bits, d_diag, d_x, d_y);
             CHECK_CUDA(cudaDeviceSynchronize());
         };
 
@@ -210,11 +224,11 @@ private:
 
         std::vector<ScalarType> h_diag(N);
         for (int i = 0; i < N; ++i) {
-            h_diag[i] = static_cast<ScalarType>(SpinLib::get_energy(sc, {static_cast<uint32_t>(num_bits), {static_cast<uint64_t>(i)}})) 
+            // Reconstructed 64-bit init since fullspace relies on num_bits <= 30
+            h_diag[i] = static_cast<ScalarType>(SpinLib::get_energy(sc, {static_cast<size_t>(num_bits), {static_cast<uint64_t>(i)}})) 
                       / static_cast<ScalarType>(num_bits);
         }
-        std::cout << "[DEBUG] FullSpace h_diag[0] = " << h_diag[0] 
-          << ", h_diag[N-1] = " << h_diag[N-1] << "\n";
+
         ScalarType* d_diag;
         CHECK_CUDA(cudaMalloc(&d_diag, N * sizeof(ScalarType)));
         CHECK_CUDA(cudaMemcpy(d_diag, h_diag.data(), N * sizeof(ScalarType), cudaMemcpyHostToDevice));
@@ -233,7 +247,7 @@ private:
     }
 
     // ---------------------------------------------------------
-    // Shared GPU Lanczos Routine
+    // Shared GPU Lanczos Routine (Identical to Original)
     // ---------------------------------------------------------
     template <typename MatVecFunc>
     static Eigenpair run_cuda_lanczos(int N, MatVecFunc matvec, int max_krylov_dim = 100) {
@@ -249,7 +263,6 @@ private:
         std::vector<ScalarType> h_alpha(m, 0.0);
         std::vector<ScalarType> h_beta(m, 0.0);
 
-        // Ensure rand() is seeded (requires <cstdlib>)
         srand(42); 
         std::vector<ScalarType> h_v0(N);
         for (int i = 0; i < N; ++i) h_v0[i] = ((ScalarType)rand() / RAND_MAX) - 0.5;
@@ -258,8 +271,6 @@ private:
         ScalarType v0_norm = 0;
         CHECK_CUBLAS(CudaTraits<ScalarType>::nrm2(cublasH, N, d_V, 1, &v0_norm));
         
-        std::cout << "[DEBUG] v0_norm = " << v0_norm << "\n"; // DEBUG LINE
-
         ScalarType inv_norm = 1.0 / v0_norm;
         CHECK_CUBLAS(CudaTraits<ScalarType>::scal(cublasH, N, &inv_norm, d_V, 1));
 
@@ -281,11 +292,9 @@ private:
 
             if (j < m - 1) {
                 CHECK_CUBLAS(CudaTraits<ScalarType>::nrm2(cublasH, N, d_w, 1, &h_beta[j]));
-                
-                std::cout << "[DEBUG] Iter " << j << " | alpha: " << h_alpha[j] << " | beta: " << h_beta[j] << "\n"; // DEBUG LINE
 
                 if (std::abs(h_beta[j]) < 1e-9) { 
-                    std::cout << "[DEBUG] Krylov space exhausted at iteration " << j << "\n";
+                    // std::cout << "[DEBUG] Krylov space exhausted at iteration " << j << "\n";
                     m_actual = j + 1; 
                     break; 
                 }
@@ -324,11 +333,6 @@ private:
         CHECK_CUDA(cudaMalloc(&d_info, sizeof(int)));
 
         CHECK_CUSOLVER(CudaTraits<ScalarType>::syevd(cusolverH, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, m_actual, d_T, m_actual, d_W, d_work, lwork, d_info));
-
-        // Fetch cuSOLVER info to check for convergence failure
-        int h_info = 0;
-        CHECK_CUDA(cudaMemcpy(&h_info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
-        std::cout << "[DEBUG] cuSOLVER info = " << h_info << "\n"; // DEBUG LINE
 
         std::vector<ScalarType> h_W(m_actual);
         CHECK_CUDA(cudaMemcpy(h_W.data(), d_W, m_actual * sizeof(ScalarType), cudaMemcpyDeviceToHost));

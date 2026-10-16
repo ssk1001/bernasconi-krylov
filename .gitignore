@@ -1,0 +1,78 @@
+# Build directories and artifacts
+build/
+bin/
+lib/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.o
+*.obj
+*.so
+*.dylib
+*.a
+*.exe
+*.out
+
+# Compiled project binaries (at repository root)
+/fixed_g_custatevec
+/probability_dynamics
+
+# Compiled test binaries (if built at repository root)
+/test_labs_energy
+/test_symmetry
+/test_baselines
+/test_config
+/test_exact_diag
+
+# Compressed shipment bundles
+colab.zip
+*.tar.gz
+*.zip
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# IDE and OS files
+.vscode/*
+!.vscode/c_cpp_properties.json
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Generated benchmark results & summaries (root level and subdirectories)
+*_results.csv
+*_summary.csv
+*_summary_statistics.csv
+*benchmark_results.csv
+*summary_statistics.csv
+
+# Generated benchmark markdown reports (both lowercase and uppercase extensions)
+*_REPORT.md
+*_REPORT.MD
+*_report.md
+*_report.MD
+SKQD_BENCHMARK_REPORT.md
+SKQD_BENCHMARK_REPORT.MD
+
+# Generated outputs & figures
+data_processed/**/*.csv
+data_processed/*.csv
+figures/*.png
+figures/*.pdf
+figures/*.svg
+
+# HPC & cluster execution logs
+slurm-*.out
+slurm-*.err
+core
+core.*
+*.log
