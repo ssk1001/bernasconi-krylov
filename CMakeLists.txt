@@ -5,12 +5,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Optimize for performance
-set(CMAKE_CUDA_ARCHITECTURES "native")
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES "native")
+endif()
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 --use_fast_math --expt-relaxed-constexpr")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall")
 
-# Explicitly add Colab's CUDA library path to prevent linker issues
-link_directories(/usr/local/cuda/lib64)
+# Add CUDA library path if present (e.g. on Colab or standard Linux)
+if(EXISTS "/usr/local/cuda/lib64")
+    link_directories(/usr/local/cuda/lib64)
+endif()
 
 # Find CUDA Toolkit (Provides cuBLAS and cuSOLVER)
 find_package(CUDAToolkit REQUIRED)
@@ -61,7 +65,9 @@ target_link_libraries(fixed_g_custatevec PRIVATE
     CUDA::cusolver 
     Eigen3::Eigen
 )
-target_link_options(fixed_g_custatevec PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
+if(EXISTS "/usr/local/cuda/lib64")
+    target_link_options(fixed_g_custatevec PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
+endif()
 
 # Probability dynamics & g-scan executable
 add_executable(probability_dynamics 
@@ -90,4 +96,6 @@ target_link_libraries(probability_dynamics PRIVATE
     CUDA::cusolver 
     Eigen3::Eigen
 )
-target_link_options(probability_dynamics PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
+if(EXISTS "/usr/local/cuda/lib64")
+    target_link_options(probability_dynamics PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
+endif()
