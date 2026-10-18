@@ -8,12 +8,14 @@
 #include <string>
 #include <algorithm>
 #include <filesystem>
+#include <unordered_set>
 #include <cuda_runtime.h>
 #include <cuComplex.h>
 #include <custatevec.h>
 
 #include "classical/sd_collector.cuh"
 #include "classical/seed_manager.hpp"
+#include "classical/symmetry.hpp"
 #include "sampling/sampler.cuh"
 
 #define CHECK_CUDA(call) { \
@@ -115,11 +117,14 @@ struct DynamicsConfig {
     size_t n = 16;
     std::vector<double> g_values = {0.25, 0.5, 1.0, 2.0};
     double dt = 0.05;
-    double t_max = 10.0;
-    size_t pool_minima_count = 50;  // Pool of SD minima to search over
-    size_t top_minima_count = 1;   // Number of energy-wise best minima to evaluate
-    std::string csv_output = "data_processed/probability_dynamics_g_scan.csv";
+    double t_max = 60.0;
+    size_t pool_minima_count = 250;
+    size_t top_minima_count = 1;
+    std::vector<size_t> trap_ranks;
     std::string seeds_dir = "seeds";
+    bool compute_transverse = false;
+    std::string csv_output = "data_processed/probability_dynamics_g_scan.csv";
+    std::string csv_summary = "data_processed/probability_dynamics_summary.csv";
 
     void load(const std::string& path) {
         std::ifstream in(path);
@@ -139,17 +144,52 @@ struct DynamicsConfig {
             else if (k == "t_max") t_max = std::stod(v);
             else if (k == "pool_minima_count") pool_minima_count = std::stoul(v);
             else if (k == "top_minima_count" || k == "num_seeds") top_minima_count = std::stoul(v);
-            else if (k == "csv_output") csv_output = v;
+            else if (k == "csv_output" || k == "csv_file") csv_output = v;
+            else if (k == "csv_summary" || k == "summary_csv") csv_summary = v;
             else if (k == "seeds_dir" || k == "seed_dir") seeds_dir = v;
-            else if (k == "g_values") {
+            else if (k == "compute_transverse" || k == "eval_transverse") {
+                std::string lower_v = v;
+                std::transform(lower_v.begin(), lower_v.end(), lower_v.begin(), ::tolower);
+                compute_transverse = (lower_v == "1" || lower_v == "true" || lower_v == "yes");
+            }
+            else if (k == "trap_ranks" || k == "traps") {
+                trap_ranks.clear();
+                std::stringstream ss(v);
+                std::string item;
+                while (std::getline(ss, item, ',')) {
+                    item.erase(remove_if(item.begin(), item.end(), ::isspace), item.end());
+                    if (!item.empty()) trap_ranks.push_back(std::stoul(item));
+                }
+            }
+            else if (k == "g_values" || k == "g") {
                 g_values.clear();
                 std::stringstream ss(v);
                 std::string item;
-                while (std::getline(ss, item, ','))
+                while (std::getline(ss, item, ',')) {
+                    item.erase(remove_if(item.begin(), item.end(), ::isspace), item.end());
                     if (!item.empty()) g_values.push_back(std::stod(item));
+                }
             }
         }
     }
+};
+
+struct DynamicsSummaryRecord {
+    size_t n;
+    size_t trap_rank;
+    size_t seed_id;
+    long long seed_energy;
+    long long known_opt;
+    double g;
+    double t_max;
+    double dt;
+    double p_blind;
+    double mean_p_full;
+    double peak_p_full;
+    double peak_time;
+    double mean_p_transv;
+    double peak_p_transv;
+    double elapsed_time_s;
 };
 
 int main(int argc, char** argv) {
@@ -166,9 +206,20 @@ int main(int argc, char** argv) {
         cfg.load("../configs/probability_scan.cfg");
     }
 
-    std::cout << "[Dynamics] Starting g-scan for top " << cfg.top_minima_count 
-              << " energy-wise best minima (pool=" << cfg.pool_minima_count 
-              << ", N=" << cfg.n << ", dt=" << cfg.dt << ", t_max=" << cfg.t_max << ")...\n";
+    std::cout << "======================================================================\n";
+    std::cout << "                PROBABILITY DYNAMICS EVOLUTION & SCAN\n";
+    std::cout << "======================================================================\n";
+    std::cout << "  System Size N       : " << cfg.n << "\n";
+    std::cout << "  Time Horizon        : t in [0, " << std::fixed << std::setprecision(1) << cfg.t_max << "] (dt = " << std::setprecision(4) << cfg.dt << ")\n";
+    std::cout << "  Transverse g Values : ";
+    for (size_t i = 0; i < cfg.g_values.size(); ++i) {
+        std::cout << std::fixed << std::setprecision(2) << cfg.g_values[i] << (i + 1 < cfg.g_values.size() ? ", " : "\n");
+    }
+    std::cout << "  Seeds Directory     : " << cfg.seeds_dir << "\n";
+    std::cout << "  Evaluate Transverse : " << (cfg.compute_transverse ? "Yes (H_X alone enabled)" : "No (Full H only; 2x faster)") << "\n";
+    std::cout << "  Output Trajectory   : " << cfg.csv_output << "\n";
+    std::cout << "  Output Summary      : " << cfg.csv_summary << "\n";
+    std::cout << "======================================================================\n" << std::endl;
 
     uint64_t num_states = 1ULL << cfg.n;
     size_t state_bytes = num_states * sizeof(cuDoubleComplex);
@@ -208,34 +259,66 @@ int main(int argc, char** argv) {
     });
 
     long long known_opt = get_known_optimum(cfg.n);
-    std::vector<SDMinimumRecord> selected_minima;
-    for (const auto& m : all_minima) {
-        // Exclude exact global optimum if found, since no states exist with E < known_opt
+    std::vector<SDMinimumRecord> canonical_orbits;
+    std::unordered_set<SpinState, SpinStateHash> seen_canonical_seeds;
+
+    for (const auto &m : all_minima) {
         if (m.energy > known_opt) {
-            selected_minima.push_back(m);
-            if (selected_minima.size() >= cfg.top_minima_count) break;
+            SpinState canon = SpinSymmetry::get_canonical_state(m.state);
+            if (seen_canonical_seeds.find(canon) == seen_canonical_seeds.end()) {
+                seen_canonical_seeds.insert(canon);
+                canonical_orbits.push_back(m);
+            }
         }
     }
-    // Fallback if none found with E > known_opt
-    if (selected_minima.empty() && !all_minima.empty()) {
-        for (size_t i = 0; i < std::min(cfg.top_minima_count, all_minima.size()); ++i)
-            selected_minima.push_back(all_minima[i]);
+
+    // Fallback if none found strictly above known_opt
+    if (canonical_orbits.empty() && !all_minima.empty()) {
+        for (const auto &m : all_minima) {
+            canonical_orbits.push_back(m);
+        }
     }
 
-    std::cout << "\n[Dynamics] Selected top " << selected_minima.size() << " energy-wise best local minima:\n";
-    for (size_t i = 0; i < selected_minima.size(); ++i) {
-        std::cout << "  Rank #" << (i + 1) << ": Energy = " << selected_minima[i].energy 
-                  << " (SD ID: " << selected_minima[i].id << ")\n";
+    struct SelectedTrap {
+        size_t rank;
+        SDMinimumRecord rec;
+    };
+    std::vector<SelectedTrap> selected_traps;
+
+    if (!cfg.trap_ranks.empty()) {
+        for (size_t rank : cfg.trap_ranks) {
+            if (rank >= 1 && rank <= canonical_orbits.size()) {
+                selected_traps.push_back({rank, canonical_orbits[rank - 1]});
+            } else {
+                std::cerr << "[Dynamics Warning] Requested trap rank " << rank 
+                          << " is out of range [1, " << canonical_orbits.size() << "]\n";
+            }
+        }
+    } else {
+        size_t count = std::min(cfg.top_minima_count, canonical_orbits.size());
+        for (size_t i = 0; i < count; ++i) {
+            selected_traps.push_back({i + 1, canonical_orbits[i]});
+        }
     }
 
-    // Ensure output directory exists
+    std::cout << "[Dynamics] Selected " << selected_traps.size() << " symmetry-distinct local minima (traps):\n";
+    for (const auto& trap : selected_traps) {
+        std::cout << "  Rank #" << std::setw(2) << trap.rank 
+                  << ": Energy E0 = " << std::setw(3) << trap.rec.energy 
+                  << " | Orbit MinID = " << trap.rec.id << "\n";
+    }
+
+    // Ensure output directories exist
     std::filesystem::path out_path(cfg.csv_output);
     if (out_path.has_parent_path()) std::filesystem::create_directories(out_path.parent_path());
     std::ofstream csv(cfg.csv_output);
-    csv << "N,seed_id,seed_energy,g,t,P_full,P_transverse,P_blind\n";
+    csv << "N,trap_rank,seed_id,seed_energy,g,t,P_full,P_transverse,P_blind\n";
 
-    for (size_t s_idx = 0; s_idx < selected_minima.size(); ++s_idx) {
-        const auto& seed_rec = selected_minima[s_idx];
+    std::vector<DynamicsSummaryRecord> summary_records;
+
+    for (const auto& trap : selected_traps) {
+        size_t trap_rank = trap.rank;
+        const auto& seed_rec = trap.rec;
         double seed_energy = static_cast<double>(seed_rec.energy);
 
         // Map seed configuration to statevector basis index
@@ -251,11 +334,17 @@ int main(int argc, char** argv) {
         CHECK_CUDA(cudaMemcpy(&count_improved, d_out_count, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
         double p_blind = static_cast<double>(count_improved) / static_cast<double>(num_states);
 
-        std::cout << "\n--- Minimum " << (s_idx + 1) << "/" << selected_minima.size() 
-                  << " (E=" << seed_rec.energy << ", P_blind=" << std::scientific << std::setprecision(3) << p_blind << ") ---" << std::endl;
+        std::cout << "\n========================================================================================\n";
+        std::cout << " [DYNAMICS] Trap Rank #" << trap_rank 
+                  << " (SD ID: " << seed_rec.id 
+                  << ", E0 = " << seed_rec.energy 
+                  << ", Known E* = " << known_opt 
+                  << ", P_blind = " << std::scientific << std::setprecision(3) << p_blind << ")\n";
+        std::cout << "========================================================================================" << std::endl;
 
         for (double g_val : cfg.g_values) {
-            std::cout << "  Evolving g = " << std::fixed << std::setprecision(2) << g_val << "..." << std::flush;
+            std::cout << "  --> Evolving g = " << std::fixed << std::setprecision(2) << g_val << "..." << std::flush;
+            auto start_eval = std::chrono::high_resolution_clock::now();
 
             double rx_angle = -2.0 * g_val * cfg.dt;
             cuDoubleComplex rx_matrix[4] = {
@@ -273,6 +362,10 @@ int main(int argc, char** argv) {
             cuDoubleComplex one = make_cuDoubleComplex(1.0, 0.0);
             CHECK_CUDA(cudaMemcpy(d_state + seed_basis_idx, &one, sizeof(cuDoubleComplex), cudaMemcpyHostToDevice));
 
+            double sum_p_full = 0.0;
+            double peak_p_full = 0.0;
+            double peak_time = 0.0;
+
             for (size_t k = 1; k <= k_steps; ++k) {
                 apply_precomputed_phase_kernel<<<(num_states + 255) / 256, 256>>>(d_state, d_energies, num_states, cfg.n, cfg.dt);
                 for (int32_t q = 0; q < static_cast<int32_t>(cfg.n); ++q) {
@@ -283,36 +376,111 @@ int main(int argc, char** argv) {
                 }
                 CHECK_CUDA(cudaMemset(d_out_prob, 0, sizeof(double)));
                 dynamics_sum_improved_prob_kernel<<<blocks, threads>>>(d_state, d_energies, seed_energy, num_states, d_out_prob);
-                CHECK_CUDA(cudaMemcpy(&p_full_t[k], d_out_prob, sizeof(double), cudaMemcpyDeviceToHost));
-            }
-
-            // B. Transverse Field Alone: H_X = -g sum(X)
-            CHECK_CUDA(cudaMemset(d_state, 0, state_bytes));
-            CHECK_CUDA(cudaMemcpy(d_state + seed_basis_idx, &one, sizeof(cuDoubleComplex), cudaMemcpyHostToDevice));
-
-            for (size_t k = 1; k <= k_steps; ++k) {
-                for (int32_t q = 0; q < static_cast<int32_t>(cfg.n); ++q) {
-                    CHECK_CUSTATEVEC(custatevecApplyMatrix(
-                        handle, d_state, CUDA_C_64F, static_cast<uint32_t>(cfg.n),
-                        rx_matrix, CUDA_C_64F, CUSTATEVEC_MATRIX_LAYOUT_ROW,
-                        0, &q, 1, nullptr, nullptr, 0, CUSTATEVEC_COMPUTE_64F, nullptr, 0));
+                double p_val = 0.0;
+                CHECK_CUDA(cudaMemcpy(&p_val, d_out_prob, sizeof(double), cudaMemcpyDeviceToHost));
+                p_full_t[k] = p_val;
+                sum_p_full += p_val;
+                if (p_val > peak_p_full) {
+                    peak_p_full = p_val;
+                    peak_time = k * cfg.dt;
                 }
-                CHECK_CUDA(cudaMemset(d_out_prob, 0, sizeof(double)));
-                dynamics_sum_improved_prob_kernel<<<blocks, threads>>>(d_state, d_energies, seed_energy, num_states, d_out_prob);
-                CHECK_CUDA(cudaMemcpy(&p_transv_t[k], d_out_prob, sizeof(double), cudaMemcpyDeviceToHost));
             }
+            double mean_p_full = (k_steps > 0) ? (sum_p_full / static_cast<double>(k_steps)) : 0.0;
+
+            // B. Transverse Field Alone: H_X = -g sum(X) (Optional)
+            double sum_p_transv = 0.0;
+            double peak_p_transv = 0.0;
+            if (cfg.compute_transverse) {
+                CHECK_CUDA(cudaMemset(d_state, 0, state_bytes));
+                CHECK_CUDA(cudaMemcpy(d_state + seed_basis_idx, &one, sizeof(cuDoubleComplex), cudaMemcpyHostToDevice));
+
+                for (size_t k = 1; k <= k_steps; ++k) {
+                    for (int32_t q = 0; q < static_cast<int32_t>(cfg.n); ++q) {
+                        CHECK_CUSTATEVEC(custatevecApplyMatrix(
+                            handle, d_state, CUDA_C_64F, static_cast<uint32_t>(cfg.n),
+                            rx_matrix, CUDA_C_64F, CUSTATEVEC_MATRIX_LAYOUT_ROW,
+                            0, &q, 1, nullptr, nullptr, 0, CUSTATEVEC_COMPUTE_64F, nullptr, 0));
+                    }
+                    CHECK_CUDA(cudaMemset(d_out_prob, 0, sizeof(double)));
+                    dynamics_sum_improved_prob_kernel<<<blocks, threads>>>(d_state, d_energies, seed_energy, num_states, d_out_prob);
+                    double p_val = 0.0;
+                    CHECK_CUDA(cudaMemcpy(&p_val, d_out_prob, sizeof(double), cudaMemcpyDeviceToHost));
+                    p_transv_t[k] = p_val;
+                    sum_p_transv += p_val;
+                    if (p_val > peak_p_transv) peak_p_transv = p_val;
+                }
+            }
+            double mean_p_transv = (k_steps > 0 && cfg.compute_transverse) ? (sum_p_transv / static_cast<double>(k_steps)) : 0.0;
+
+            auto end_eval = std::chrono::high_resolution_clock::now();
+            double elapsed_s = std::chrono::duration<double>(end_eval - start_eval).count();
 
             // Write trajectory to CSV
             for (size_t k = 0; k <= k_steps; ++k) {
                 double t = k * cfg.dt;
-                csv << cfg.n << "," << s_idx << "," << seed_rec.energy << ","
+                csv << cfg.n << "," << trap_rank << "," << seed_rec.id << "," << seed_rec.energy << ","
                     << g_val << "," << std::fixed << std::setprecision(4) << t << ","
                     << std::setprecision(8) << p_full_t[k] << "," << p_transv_t[k] << "," << p_blind << "\n";
             }
-            std::cout << " Done. (Peak P_full=" << std::setprecision(4) 
-                      << *std::max_element(p_full_t.begin(), p_full_t.end()) << ")\n";
+            csv.flush();
+
+            std::cout << " Done. (" << std::fixed << std::setprecision(1) << elapsed_s << "s) | Mean P_<[0," 
+                      << std::setprecision(0) << cfg.t_max << "]: " << std::scientific << std::setprecision(4) << mean_p_full 
+                      << " | Peak P_<: " << peak_p_full 
+                      << " (at t=" << std::fixed << std::setprecision(2) << peak_time << "s)" << std::endl;
+
+            summary_records.push_back({
+                cfg.n, trap_rank, seed_rec.id, seed_rec.energy, known_opt,
+                g_val, cfg.t_max, cfg.dt, p_blind,
+                mean_p_full, peak_p_full, peak_time,
+                mean_p_transv, peak_p_transv, elapsed_s
+            });
         }
     }
+
+    // Write summary CSV
+    std::filesystem::path sum_path(cfg.csv_summary);
+    if (sum_path.has_parent_path()) std::filesystem::create_directories(sum_path.parent_path());
+    std::ofstream sum_csv(cfg.csv_summary);
+    sum_csv << "N,trap_rank,seed_id,seed_energy,known_opt,g,t_max,dt,P_blind,Mean_P_less_60,Peak_P_less,Peak_Time_s,Mean_P_transv,Peak_P_transv,Elapsed_s\n";
+    for (const auto& r : summary_records) {
+        sum_csv << r.n << "," << r.trap_rank << "," << r.seed_id << "," << r.seed_energy << "," << r.known_opt << ","
+                << r.g << "," << r.t_max << "," << r.dt << ","
+                << r.p_blind << "," << r.mean_p_full << "," << r.peak_p_full << "," << r.peak_time << ","
+                << r.mean_p_transv << "," << r.peak_p_transv << "," << r.elapsed_time_s << "\n";
+    }
+    sum_csv.flush();
+
+    // Print Consolidated Summary Table
+    std::cout << "\n========================================================================================================================\n";
+    std::cout << "               PROBABILITY DYNAMICS SUMMARY: System Size N = " << cfg.n 
+              << " (t in [0.0, " << std::fixed << std::setprecision(1) << cfg.t_max 
+              << "], dt = " << std::setprecision(4) << cfg.dt << ")\n";
+    std::cout << "========================================================================================================================\n";
+    std::cout << " Trap Rank | Seed E0 | Known E* |   g   |   P_blind   | Mean P_<(t) [0," 
+              << std::setprecision(0) << cfg.t_max << "] |  Peak P_<(t) | Peak Time (s) | Elapsed (s)\n";
+    std::cout << "-----------+---------+----------+-------+-------------+-----------------------+--------------+---------------+------------\n";
+
+    for (const auto& r : summary_records) {
+        std::ostringstream ss_blind, ss_mean, ss_peak;
+        ss_blind << std::scientific << std::setprecision(3) << r.p_blind;
+        ss_mean << std::scientific << std::setprecision(4) << r.mean_p_full;
+        ss_peak << std::scientific << std::setprecision(4) << r.peak_p_full;
+
+        std::string trap_str = "Rank #" + std::to_string(r.trap_rank);
+        std::cout << " " << std::left << std::setw(9) << trap_str << " | "
+                  << std::right << std::setw(7) << r.seed_energy << " | "
+                  << std::setw(8) << r.known_opt << " | "
+                  << std::setw(5) << std::fixed << std::setprecision(2) << r.g << " | "
+                  << std::setw(11) << ss_blind.str() << " | "
+                  << std::setw(21) << ss_mean.str() << " | "
+                  << std::setw(12) << ss_peak.str() << " | "
+                  << std::setw(13) << std::fixed << std::setprecision(2) << r.peak_time << " | "
+                  << std::setw(10) << std::fixed << std::setprecision(1) << r.elapsed_time_s << "\n";
+    }
+    std::cout << "========================================================================================================================\n";
+    std::cout << "[Dynamics] Trajectory written to : " << cfg.csv_output << "\n";
+    std::cout << "[Dynamics] Summary written to    : " << cfg.csv_summary << "\n\n";
 
     CHECK_CUSTATEVEC(custatevecDestroy(handle));
     CHECK_CUDA(cudaFree(d_state));
@@ -320,6 +488,5 @@ int main(int argc, char** argv) {
     CHECK_CUDA(cudaFree(d_out_prob));
     CHECK_CUDA(cudaFree(d_out_count));
 
-    std::cout << "\n[Dynamics] All trajectories recorded to: " << cfg.csv_output << std::endl;
     return 0;
 }
