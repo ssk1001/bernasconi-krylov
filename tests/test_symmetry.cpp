@@ -107,6 +107,31 @@ void test_binomial_statistics() {
     std::cout << "  --> PASSED: Binomial error bars and Wilson CI verified!\n";
 }
 
+void test_bitstring_roundtrip() {
+    std::cout << "[Test 5] Testing to_bitstring and from_bitstring roundtrip...\n";
+    std::mt19937_64 rng(54321);
+
+    for (size_t n : {4, 8, 16, 20, 24, 32, 64}) {
+        uint64_t mask = (n == 64) ? ~0ULL : ((1ULL << n) - 1ULL);
+        for (int trial = 0; trial < 100; ++trial) {
+            SpinState orig;
+            orig.num_bits = n;
+            orig.bits = {rng() & mask};
+
+            std::string bitstr = SpinSymmetry::to_bitstring(orig);
+            assert(bitstr.size() == n && "Bitstring must match system size");
+            for (char c : bitstr) {
+                assert((c == '0' || c == '1') && "Bitstring must contain only '0' or '1'");
+            }
+
+            SpinState reconstructed = SpinSymmetry::from_bitstring(bitstr);
+            assert(reconstructed == orig && "Reconstructed SpinState must exactly match original");
+            assert(SpinSymmetry::to_bitstring(reconstructed) == bitstr && "Roundtrip bitstring must match");
+        }
+    }
+    std::cout << "  --> PASSED: to_bitstring <-> from_bitstring bijection verified across all N!\n";
+}
+
 int main() {
     std::cout << "=========================================\n";
     std::cout << "       Testing SpinSymmetry Module       \n";
@@ -115,6 +140,7 @@ int main() {
     test_canonical_uniqueness();
     test_deduplication_reduction();
     test_binomial_statistics();
+    test_bitstring_roundtrip();
     std::cout << "\nALL SYMMETRY & STATISTICAL TESTS PASSED SUCCESSFULLY!\n";
     return 0;
 }

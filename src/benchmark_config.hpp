@@ -26,6 +26,10 @@ struct BenchmarkConfig {
     uint64_t seed_base = 42;
     uint64_t seed_stride = 10007;
 
+    // Seed caching and persistence parameters
+    std::string seeds_dir = "seeds";
+    bool force_regenerate_seeds = false;
+
     // Physical & sampling parameters
     double g = 0.15;                                                  // Default / global transverse field strength
     std::vector<double> g_values = {0.15, 0.25, 0.35, 0.5, 0.75};    // List of g values to evaluate (if multiple)
@@ -301,6 +305,12 @@ struct BenchmarkConfig {
                 cfg.restart_trials = cfg.classical_trials_per_d; // Default restart trials to match unless overridden
             } else if (key == "restart_trials" || key == "num_restart_trials") {
                 cfg.restart_trials = std::stoul(val);
+            } else if (key == "seeds_dir" || key == "seed_dir") {
+                cfg.seeds_dir = val;
+            } else if (key == "force_regenerate_seeds" || key == "regenerate_seeds") {
+                std::string v = val;
+                std::transform(v.begin(), v.end(), v.begin(), ::tolower);
+                cfg.force_regenerate_seeds = (v == "1" || v == "true" || v == "yes");
             } else {
                 std::cerr << "[Config Warning] Unknown parameter on line " << line_no << ": " << key << "\n";
             }

@@ -10,6 +10,7 @@
 #include <map>
 #include <unordered_set>
 #include <sstream>
+#include <cmath>
 #include "../labs_energy/labs_energy.hpp"
 
 namespace SpinSymmetry {
@@ -128,7 +129,24 @@ namespace SpinSymmetry {
         return str;
     }
 
+    /**
+     * Parses a SpinState from a human-readable bitstring (e.g. "01101...").
+     * Exact inverse bijection of to_bitstring.
+     */
+    inline SpinState from_bitstring(const std::string& str) {
+        SpinState s;
+        s.num_bits = str.size();
+        s.bits.assign((s.num_bits + 63) / 64, 0ULL);
+        for (size_t i = 0; i < s.num_bits; ++i) {
+            if (str[s.num_bits - 1 - i] == '1') {
+                s.bits[i / 64] |= (1ULL << (i % 64));
+            }
+        }
+        return s;
+    }
+
 } // namespace SpinSymmetry
+
 
 // Record representing a discovered local minimum deduplicated by symmetry
 struct SDMinimumRecord {

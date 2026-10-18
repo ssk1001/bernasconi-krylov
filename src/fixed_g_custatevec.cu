@@ -15,6 +15,7 @@
 
 #include "benchmark_config.hpp"
 #include "classical/sd_collector.cuh"
+#include "classical/seed_manager.hpp"
 #include "sampling/sampler.cuh"
 #include "subspace/lanczos.cuh"
 #include "exact/exact_diag.hpp"
@@ -434,8 +435,10 @@ int main(int argc, char **argv)
         SpinCache cache;
         CuStateVecSampler sampler;
 
-        std::cout << "[TRACE] Collecting pool of symmetry-distinct Steepest Descent minima..." << std::endl;
-        auto all_minima = collect_distinct_sd_minima(n_spins, bench_cfg.pool_minima_count, cache);
+        bool seeds_were_cached = false;
+        auto all_minima = SeedManager::get_or_collect_minima(
+            n_spins, bench_cfg.pool_minima_count, bench_cfg.seeds_dir,
+            bench_cfg.force_regenerate_seeds, cache, seeds_were_cached);
         long long known_opt = get_known_optimum(n_spins);
 
         // Sort ascending by energy (deepest traps first)
@@ -443,11 +446,16 @@ int main(int argc, char **argv)
             return a.energy < b.energy;
         });
 
-        // Select representative minima strictly above known_opt
+        // Select representative minima
         std::vector<SDMinimumRecord> selected_minima;
         std::unordered_set<long long> seen_energies;
 
-        if (bench_cfg.minima_selection_mode == "top_distinct_minima" ||
+        if (seeds_were_cached && all_minima.size() <= bench_cfg.top_minima_count) {
+            // Direct seed mode: cached file provided a tailored list of target seeds
+            selected_minima = all_minima;
+            std::cout << "[INFO] Using all " << selected_minima.size() 
+                      << " seeds directly from cached seed file.\n";
+        } else if (bench_cfg.minima_selection_mode == "top_distinct_minima" ||
             bench_cfg.minima_selection_mode == "lowest_energy_orbits") {
             std::unordered_set<SpinState, SpinStateHash> seen_canonical_seeds;
             for (const auto &m : all_minima) {

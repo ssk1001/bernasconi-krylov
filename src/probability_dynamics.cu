@@ -13,6 +13,7 @@
 #include <custatevec.h>
 
 #include "classical/sd_collector.cuh"
+#include "classical/seed_manager.hpp"
 #include "sampling/sampler.cuh"
 
 #define CHECK_CUDA(call) { \
@@ -117,6 +118,7 @@ struct DynamicsConfig {
     size_t pool_minima_count = 50;  // Pool of SD minima to search over
     size_t top_minima_count = 1;   // Number of energy-wise best minima to evaluate
     std::string csv_output = "data_processed/probability_dynamics_g_scan.csv";
+    std::string seeds_dir = "seeds";
 
     void load(const std::string& path) {
         std::ifstream in(path);
@@ -137,6 +139,7 @@ struct DynamicsConfig {
             else if (k == "pool_minima_count") pool_minima_count = std::stoul(v);
             else if (k == "top_minima_count" || k == "num_seeds") top_minima_count = std::stoul(v);
             else if (k == "csv_output") csv_output = v;
+            else if (k == "seeds_dir" || k == "seed_dir") seeds_dir = v;
             else if (k == "g_values") {
                 g_values.clear();
                 std::stringstream ss(v);
@@ -192,11 +195,11 @@ int main(int argc, char** argv) {
     custatevecHandle_t handle;
     CHECK_CUSTATEVEC(custatevecCreate(&handle));
 
-    // Collect pool of distinct SD minima and select the energy-wise best
+    // Collect pool of distinct SD minima (or load cached seeds)
     SpinCache cache;
-    std::cout << "[Dynamics] Collecting pool of " << cfg.pool_minima_count 
-              << " symmetry-distinct SD minima..." << std::endl;
-    auto all_minima = collect_distinct_sd_minima(cfg.n, cfg.pool_minima_count, cache);
+    bool seeds_were_cached = false;
+    auto all_minima = SeedManager::get_or_collect_minima(
+        cfg.n, cfg.pool_minima_count, cfg.seeds_dir, false, cache, seeds_were_cached);
 
     // Sort ascending by energy (lowest energy = best minima)
     std::sort(all_minima.begin(), all_minima.end(), [](const auto& a, const auto& b) {
