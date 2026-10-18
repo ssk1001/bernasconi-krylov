@@ -316,6 +316,7 @@ inline long long get_known_optimum(size_t n)
     if (n == 24) return 36;
     if (n == 26) return 45;
     if (n == 28) return 50;
+    if (n == 30) return 59;
     return -1;
 }
 

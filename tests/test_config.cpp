@@ -177,6 +177,34 @@ int main() {
         std::cout << "  --> PASSED: n20_to_n26_delayed_window.cfg (N=20..26, top_distinct_minima, 5-g sweep)\n";
     }
 
+    // 10. Test loading n28_delayed_window_g035.cfg
+    {
+        auto cfg = BenchmarkConfig::load_from_file("configs/n28_delayed_window_g035.cfg");
+        assert(cfg.n_values.size() == 1 && cfg.n_values[0] == 28);
+        assert(cfg.g_values.size() == 1 && std::abs(cfg.g_values[0] - 0.35) < 1e-9);
+        assert(cfg.top_minima_count == 10);
+        assert(cfg.pool_minima_count == 250);
+        assert(cfg.seeds_dir == "seeds");
+        assert(!cfg.force_regenerate_seeds);
+        assert(cfg.csv_results_filename == "n28_delayed_window_g035_results.csv");
+        assert(cfg.csv_summary_filename == "n28_delayed_window_g035_summary.csv");
+        std::cout << "  --> PASSED: n28_delayed_window_g035.cfg (N=28, g=0.35)\n";
+    }
+
+    // 11. Test loading n30_delayed_window_g035.cfg
+    {
+        auto cfg = BenchmarkConfig::load_from_file("configs/n30_delayed_window_g035.cfg");
+        assert(cfg.n_values.size() == 1 && cfg.n_values[0] == 30);
+        assert(cfg.g_values.size() == 1 && std::abs(cfg.g_values[0] - 0.35) < 1e-9);
+        assert(cfg.top_minima_count == 10);
+        assert(cfg.pool_minima_count == 250);
+        assert(cfg.seeds_dir == "seeds");
+        assert(!cfg.force_regenerate_seeds);
+        assert(cfg.csv_results_filename == "n30_delayed_window_g035_results.csv");
+        assert(cfg.csv_summary_filename == "n30_delayed_window_g035_summary.csv");
+        std::cout << "  --> PASSED: n30_delayed_window_g035.cfg (N=30, g=0.35)\n";
+    }
+
     std::cout << "\nALL CONFIG PARSER TESTS PASSED SUCCESSFULLY!\n";
     return 0;
 }
