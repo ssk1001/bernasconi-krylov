@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-#SBATCH --time=00:30:00
+#SBATCH --time=01:15:00
 #SBATCH --output=slurm_%x_%j.out
 #SBATCH --error=slurm_%x_%j.err
 
@@ -19,16 +19,16 @@ cd "${SLURM_SUBMIT_DIR}"
 source scripts/setup_env.sh qsim
 
 # 2. Ensure directories exist
-mkdir -p data_processed figures
+mkdir -p data_processed figures/n28
 
-# 3. Run Probability Dynamics for N=28 (g in {0.3, 0.35, 0.45}, t in [0, 60])
+# 3. Run Probability Dynamics for N=28 (10 traps, g in {0.3, 0.35, 0.45}, t in [0, 60])
 echo "--- Running Probability Dynamics (N=28) ---"
 ./build/probability_dynamics configs/probability_scan_n28.cfg
 
-# 4. Generate Plot and Print Summary
-echo "--- Generating Plot and Summary ---"
+# 4. Generate Individual Images for all 10 Traps and Overview Grid
+echo "--- Generating Plots and Summary ---"
 python3 scripts/plot_probability_dynamics.py \
     data_processed/probability_dynamics_n28.csv \
-    figures/probability_dynamics_n28.png
+    figures/n28
 
 echo "=== Job Completed with status $? at $(date) ==="
