@@ -47,72 +47,8 @@ if(NOT CUSTATEVEC_LIB)
     message(FATAL_ERROR "custatevec library not found. Please ensure cuQuantum is installed and CUQUANTUM_ROOT is set.")
 endif()
 
-# Define the main executable
-add_executable(fixed_g_custatevec 
-    src/fixed_g_custatevec.cu
-)
-
-# Set include directories based on your tree
-target_include_directories(fixed_g_custatevec PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/src/labs_energy
-    ${CMAKE_SOURCE_DIR}/src/sampling
-    ${CMAKE_SOURCE_DIR}/src/subspace
-    ${CMAKE_SOURCE_DIR}/src/exact
-    ${CMAKE_SOURCE_DIR}/src/classical
-    ${CMAKE_SOURCE_DIR}/src/baselines
-)
-
-# Add cuQuantum headers if CUQUANTUM_ROOT is provided
-if(DEFINED ENV{CUQUANTUM_ROOT})
-    target_include_directories(fixed_g_custatevec PRIVATE $ENV{CUQUANTUM_ROOT}/include)
-elseif(DEFINED CUQUANTUM_ROOT)
-    target_include_directories(fixed_g_custatevec PRIVATE ${CUQUANTUM_ROOT}/include)
-endif()
-
-# Link libraries (ORDER MATTERS: cuStateVec must come BEFORE cuBLAS/cuSOLVER)
-target_link_libraries(fixed_g_custatevec PRIVATE 
-    ${CUSTATEVEC_LIB}
-    CUDA::cublas 
-    CUDA::cusolver 
-    Eigen3::Eigen
-)
-if(EXISTS "/usr/local/cuda/lib64")
-    target_link_options(fixed_g_custatevec PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
-endif()
-
-# Probability dynamics & g-scan executable
-add_executable(probability_dynamics 
-    src/probability_dynamics.cu
-)
-
-target_include_directories(probability_dynamics PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/src/labs_energy
-    ${CMAKE_SOURCE_DIR}/src/sampling
-    ${CMAKE_SOURCE_DIR}/src/subspace
-    ${CMAKE_SOURCE_DIR}/src/exact
-    ${CMAKE_SOURCE_DIR}/src/classical
-)
-
-if(DEFINED ENV{CUQUANTUM_ROOT})
-    target_include_directories(probability_dynamics PRIVATE $ENV{CUQUANTUM_ROOT}/include)
-elseif(DEFINED CUQUANTUM_ROOT)
-    target_include_directories(probability_dynamics PRIVATE ${CUQUANTUM_ROOT}/include)
-endif()
-
-target_link_libraries(probability_dynamics PRIVATE 
-    ${CUSTATEVEC_LIB}
-    CUDA::cublas 
-    CUDA::cusolver 
-    Eigen3::Eigen
-)
-if(EXISTS "/usr/local/cuda/lib64")
-    target_link_options(probability_dynamics PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
-endif()
-
 # ==============================================================================
-# Modern Unified Benchmark Executor
+# Modern Unified Benchmark Executor (Primary Target)
 # ==============================================================================
 add_executable(run_benchmark 
     src/run_benchmark.cu
@@ -146,4 +82,71 @@ target_link_libraries(run_benchmark PRIVATE
 )
 if(EXISTS "/usr/local/cuda/lib64")
     target_link_options(run_benchmark PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
+endif()
+
+# ==============================================================================
+# Deprecated Legacy Executables (Disabled by default)
+# ==============================================================================
+option(BUILD_LEGACY_TARGETS "Build deprecated legacy executables (fixed_g_custatevec, probability_dynamics)" OFF)
+if(BUILD_LEGACY_TARGETS)
+    # Define the main legacy executable
+    add_executable(fixed_g_custatevec 
+        src/fixed_g_custatevec.cu
+    )
+
+    target_include_directories(fixed_g_custatevec PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/labs_energy
+        ${CMAKE_SOURCE_DIR}/src/sampling
+        ${CMAKE_SOURCE_DIR}/src/subspace
+        ${CMAKE_SOURCE_DIR}/src/exact
+        ${CMAKE_SOURCE_DIR}/src/classical
+        ${CMAKE_SOURCE_DIR}/src/baselines
+    )
+
+    if(DEFINED ENV{CUQUANTUM_ROOT})
+        target_include_directories(fixed_g_custatevec PRIVATE $ENV{CUQUANTUM_ROOT}/include)
+    elseif(DEFINED CUQUANTUM_ROOT)
+        target_include_directories(fixed_g_custatevec PRIVATE ${CUQUANTUM_ROOT}/include)
+    endif()
+
+    target_link_libraries(fixed_g_custatevec PRIVATE 
+        ${CUSTATEVEC_LIB}
+        CUDA::cublas 
+        CUDA::cusolver 
+        Eigen3::Eigen
+    )
+    if(EXISTS "/usr/local/cuda/lib64")
+        target_link_options(fixed_g_custatevec PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
+    endif()
+
+    # Legacy probability dynamics executable
+    add_executable(probability_dynamics 
+        src/probability_dynamics.cu
+    )
+
+    target_include_directories(probability_dynamics PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/labs_energy
+        ${CMAKE_SOURCE_DIR}/src/sampling
+        ${CMAKE_SOURCE_DIR}/src/subspace
+        ${CMAKE_SOURCE_DIR}/src/exact
+        ${CMAKE_SOURCE_DIR}/src/classical
+    )
+
+    if(DEFINED ENV{CUQUANTUM_ROOT})
+        target_include_directories(probability_dynamics PRIVATE $ENV{CUQUANTUM_ROOT}/include)
+    elseif(DEFINED CUQUANTUM_ROOT)
+        target_include_directories(probability_dynamics PRIVATE ${CUQUANTUM_ROOT}/include)
+    endif()
+
+    target_link_libraries(probability_dynamics PRIVATE 
+        ${CUSTATEVEC_LIB}
+        CUDA::cublas 
+        CUDA::cusolver 
+        Eigen3::Eigen
+    )
+    if(EXISTS "/usr/local/cuda/lib64")
+        target_link_options(probability_dynamics PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
+    endif()
 endif()

@@ -28,18 +28,36 @@ else
 fi
 
 # 2. Activate Conda Environment (for cuQuantum, Eigen, Python)
-if command -v conda &> /dev/null; then
+# Find and source conda.sh to ensure 'conda activate' is available in subshells
+CONDA_PROFILE=""
+for candidate in \
+    "${CONDA_EXE%/bin/conda}/etc/profile.d/conda.sh" \
+    "${HOME}/miniconda3/etc/profile.d/conda.sh" \
+    "${HOME}/anaconda3/etc/profile.d/conda.sh" \
+    "/apps/miniconda3/etc/profile.d/conda.sh" \
+    "/apps/anaconda3/etc/profile.d/conda.sh" \
+    "/opt/conda/etc/profile.d/conda.sh"; do
+    if [ -f "${candidate}" ]; then
+        CONDA_PROFILE="${candidate}"
+        break
+    fi
+done
+
+if [ -n "${CONDA_PROFILE}" ]; then
+    source "${CONDA_PROFILE}"
+elif command -v conda &> /dev/null; then
     eval "$(conda shell.bash hook 2> /dev/null || true)"
+fi
+
+if [ "${CONDA_DEFAULT_ENV}" = "${ENV_NAME}" ]; then
+    echo "[CONDA] Already active in requested environment: '${ENV_NAME}'"
+elif command -v conda &> /dev/null; then
     echo "[CONDA] Activating Conda environment '${ENV_NAME}'..."
-    conda activate "${ENV_NAME}" 2> /dev/null || echo "[WARN] Could not activate conda env '${ENV_NAME}'. Using active environment."
-elif [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
-    source "${HOME}/miniconda3/etc/profile.d/conda.sh"
-    echo "[CONDA] Activating Conda environment '${ENV_NAME}'..."
-    conda activate "${ENV_NAME}"
-elif [ -f "${HOME}/anaconda3/etc/profile.d/conda.sh" ]; then
-    source "${HOME}/anaconda3/etc/profile.d/conda.sh"
-    echo "[CONDA] Activating Conda environment '${ENV_NAME}'..."
-    conda activate "${ENV_NAME}"
+    if ! conda activate "${ENV_NAME}"; then
+        echo "[WARN] Could not activate '${ENV_NAME}'. Check available environments with: conda env list"
+    fi
+else
+    echo "[WARN] 'conda' command not found. Ensure Conda is installed and added to PATH."
 fi
 
 # 3. Export Linker, Header, and Library Paths
