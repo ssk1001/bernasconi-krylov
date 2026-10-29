@@ -423,6 +423,7 @@ public:
                                   << " | P_<(t) = " << std::scientific << std::setprecision(3) << p_less_val
                                   << " | Peak = " << result.peak_p_less << " (at t=" << std::fixed << std::setprecision(1) << result.peak_time << "s)"
                                   << std::defaultfloat << std::endl;
+                    }
                 }
             } else if (config.track_p_less) {
                 // Coarse delayed-window measurement points
