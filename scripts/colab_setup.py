@@ -63,6 +63,7 @@ else:
 print("\n=== Step 4: Building run_benchmark with CMake ===")
 !cmake -B build -S . \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_ARCHITECTURES="native" \
     -DCUQUANTUM_ROOT="{cuquantum_root}" \
     -DCUQUANTUM_INCLUDE_DIR="{cuquantum_include}" \
     -DCUSTATEVEC_LIB="{cuquantum_so}"

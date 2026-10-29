@@ -98,13 +98,27 @@ __inline__ __device__ double warp_reduce_sum_prob(double val) {
     return val;
 }
 
+// Portable atomicAdd for double on architectures with __CUDA_ARCH__ < 600
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 600
+static __inline__ __device__ double atomicAdd(double* address, double val) {
+    unsigned long long int* address_as_ull = (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed,
+                        __double_as_longlong(val + __longlong_as_double(assumed)));
+    } while (assumed != old);
+    return __longlong_as_double(old);
+}
+#endif
+
 /// Parallel reduction kernel to sum |c_s|^2 strictly where E(s) < E_0 in O(N) tree depth
 static __global__ void sum_p_less_kernel(
     const cuDoubleComplex* __restrict__ d_state,
     const double* __restrict__ d_energies,
     double seed_energy,
     uint64_t num_states,
-    double* __restrict__ d_out_prob)
+    double* d_out_prob)
 {
     __shared__ double warp_sums[32];
     double thread_sum = 0.0;
@@ -136,7 +150,7 @@ static __global__ void count_improved_states_kernel(
     const double* __restrict__ d_energies,
     double seed_energy,
     uint64_t num_states,
-    unsigned long long* __restrict__ d_out_count)
+    unsigned long long* d_out_count)
 {
     __shared__ unsigned long long warp_sums[32];
     unsigned long long thread_count = 0;
