@@ -413,6 +413,16 @@ public:
                         result.peak_time = current_t;
                     }
                     next_traj_time += traj_interval;
+
+                    // Periodic progress update flushed to stdout
+                    if (config.verbose && (step % 200 == 0 || step == total_trotter_steps)) {
+                        double pct = (total_trotter_steps > 0) ? (100.0 * step / total_trotter_steps) : 100.0;
+                        std::cout << "    [Progress " << std::setw(3) << static_cast<int>(pct) << "%] Step "
+                                  << std::setw(4) << step << "/" << total_trotter_steps
+                                  << " (t = " << std::fixed << std::setprecision(1) << current_t << "s)"
+                                  << " | P_<(t) = " << std::scientific << std::setprecision(3) << p_less_val
+                                  << " | Peak = " << result.peak_p_less << " (at t=" << std::fixed << std::setprecision(1) << result.peak_time << "s)"
+                                  << std::defaultfloat << std::endl;
                 }
             } else if (config.track_p_less) {
                 // Coarse delayed-window measurement points
