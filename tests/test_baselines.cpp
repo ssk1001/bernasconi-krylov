@@ -1,3 +1,9 @@
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// Tests legacy budgeted_baselines.hpp. 
+// Superseded by tests/test_steepest_descent.cu.
+// ============================================================================
+
 #include <iostream>
 #include <cassert>
 #include <random>

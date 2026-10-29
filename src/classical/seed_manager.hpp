@@ -1,5 +1,11 @@
 #pragma once
 
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// This file is superseded by src/classical/classical.cuh (ClassicalOptimizer & ClassicalLogger).
+// Do not use in new implementations.
+// ============================================================================
+
 #include <iostream>
 #include <fstream>
 #include <sstream>

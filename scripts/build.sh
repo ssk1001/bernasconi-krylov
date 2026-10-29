@@ -24,12 +24,13 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH="${CONDA_PREFIX}"
 
 echo ""
-echo "[BUILD] Compiling fixed_g_custatevec and probability_dynamics..."
-cmake --build build --target fixed_g_custatevec probability_dynamics -j4
+echo "[BUILD] Compiling run_benchmark, fixed_g_custatevec, and probability_dynamics..."
+cmake --build build --target run_benchmark fixed_g_custatevec probability_dynamics -j4
 
 echo ""
 echo "======================================================================"
 echo "[SUCCESS] Build complete! Binaries located at:"
-echo "  - ${ROOT_DIR}/build/fixed_g_custatevec"
-echo "  - ${ROOT_DIR}/build/probability_dynamics"
+echo "  - ${ROOT_DIR}/build/run_benchmark (Unified Benchmark & Dynamics)"
+echo "  - ${ROOT_DIR}/build/fixed_g_custatevec (Legacy)"
+echo "  - ${ROOT_DIR}/build/probability_dynamics (Legacy)"
 echo "======================================================================"

@@ -1,3 +1,9 @@
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// Tests legacy symmetry.hpp. 
+// Superseded by tests/test_labs_energy.cpp (order-8 symmetry group tests).
+// ============================================================================
+
 #include <iostream>
 #include <cassert>
 #include <random>

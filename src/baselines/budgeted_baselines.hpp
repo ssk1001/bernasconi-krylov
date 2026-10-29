@@ -1,6 +1,12 @@
 #ifndef BUDGETED_BASELINES_HPP
 #define BUDGETED_BASELINES_HPP
 
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// This file is superseded by src/classical/classical.cuh (ClassicalOptimizer::random_restarts & random_kick).
+// Do not use in new implementations.
+// ============================================================================
+
 #include <vector>
 #include <random>
 #include <numeric>

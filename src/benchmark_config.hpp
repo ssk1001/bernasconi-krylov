@@ -1,5 +1,12 @@
 #pragma once
 
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// Legacy benchmark configuration header. 
+// Sampling parameters are now configured via SamplerConfig (src/sampling/sampler.cuh)
+// and Classical parameters via src/classical/classical.cuh.
+// ============================================================================
+
 #include <iostream>
 #include <fstream>
 #include <sstream>

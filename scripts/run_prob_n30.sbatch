@@ -23,7 +23,7 @@ mkdir -p data_processed figures/n30
 
 # 3. Run Probability Dynamics for N=30 (10 traps, g in {0.3, 0.35, 0.45}, t in [0, 60])
 echo "--- Running Probability Dynamics (N=30) ---"
-./build/probability_dynamics configs/probability_scan_n30.cfg
+./build/run_benchmark configs/probability_scan_n30.cfg
 
 # 4. Generate Individual Images for all 10 Traps and Overview Grid
 echo "--- Generating Plots and Summary ---"

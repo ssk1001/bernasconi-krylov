@@ -1,6 +1,12 @@
 #ifndef SPIN_SYMMETRY_HPP
 #define SPIN_SYMMETRY_HPP
 
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// This file is superseded by src/labs_energy/labs_energy.hpp (SpinState::canonical).
+// Do not use in new implementations.
+// ============================================================================
+
 #include <vector>
 #include <cstdint>
 #include <cstddef>

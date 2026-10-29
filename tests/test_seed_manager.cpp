@@ -1,3 +1,9 @@
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// Tests legacy seed_manager.hpp. 
+// Superseded by tests/test_steepest_descent.cu (CSV reconstruction tests).
+// ============================================================================
+
 #include <iostream>
 #include <cassert>
 #include <filesystem>

@@ -1,3 +1,9 @@
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// This file is superseded by src/subspace/diagonalizer.cuh (Diagonalizer::solve_*_dense).
+// Do not use in new implementations.
+// ============================================================================
+
 #include <vector>
 #include <stdexcept>
 #include <Eigen/Dense>

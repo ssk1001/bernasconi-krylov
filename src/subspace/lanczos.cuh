@@ -1,4 +1,10 @@
 #pragma once
+
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// This file is superseded by src/subspace/diagonalizer.cuh (Diagonalizer::solve_*_lanczos).
+// Do not use in new implementations.
+// ============================================================================
 #include "../labs_energy/labs_energy.hpp"
 
 #include <vector>

@@ -23,12 +23,25 @@ find_package(CUDAToolkit REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 # Find cuStateVec (cuQuantum SDK)
-find_library(CUSTATEVEC_LIB custatevec
-    HINTS 
-        ${CUQUANTUM_ROOT}/lib
-        $ENV{CUQUANTUM_ROOT}/lib
-        /usr/local/cuquantum/lib
-)
+if(NOT CUSTATEVEC_LIB)
+    find_library(CUSTATEVEC_LIB
+        NAMES
+            custatevec
+            libcustatevec.so.1
+            libcustatevec.so.12
+            libcustatevec.so
+        HINTS 
+            ${CUQUANTUM_ROOT}/lib
+            $ENV{CUQUANTUM_ROOT}/lib
+            ${CUQUANTUM_ROOT}
+            $ENV{CUQUANTUM_ROOT}
+            /usr/local/cuquantum/lib
+        PATH_SUFFIXES
+            lib
+            lib64
+            cuquantum/lib
+    )
+endif()
 
 if(NOT CUSTATEVEC_LIB)
     message(FATAL_ERROR "custatevec library not found. Please ensure cuQuantum is installed and CUQUANTUM_ROOT is set.")
@@ -37,7 +50,6 @@ endif()
 # Define the main executable
 add_executable(fixed_g_custatevec 
     src/fixed_g_custatevec.cu
-    src/sampling/custatevec_sampler.cu
 )
 
 # Set include directories based on your tree
@@ -72,7 +84,6 @@ endif()
 # Probability dynamics & g-scan executable
 add_executable(probability_dynamics 
     src/probability_dynamics.cu
-    src/sampling/custatevec_sampler.cu
 )
 
 target_include_directories(probability_dynamics PRIVATE
@@ -98,4 +109,41 @@ target_link_libraries(probability_dynamics PRIVATE
 )
 if(EXISTS "/usr/local/cuda/lib64")
     target_link_options(probability_dynamics PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
+endif()
+
+# ==============================================================================
+# Modern Unified Benchmark Executor
+# ==============================================================================
+add_executable(run_benchmark 
+    src/run_benchmark.cu
+)
+
+target_include_directories(run_benchmark PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/labs_energy
+    ${CMAKE_SOURCE_DIR}/src/sampling
+    ${CMAKE_SOURCE_DIR}/src/subspace
+    ${CMAKE_SOURCE_DIR}/src/exact
+    ${CMAKE_SOURCE_DIR}/src/classical
+    ${CMAKE_SOURCE_DIR}/src/config
+    ${CMAKE_SOURCE_DIR}/src/connector
+)
+
+if(DEFINED ENV{CUQUANTUM_ROOT})
+    target_include_directories(run_benchmark PRIVATE $ENV{CUQUANTUM_ROOT}/include $ENV{CUQUANTUM_ROOT})
+elseif(DEFINED CUQUANTUM_ROOT)
+    target_include_directories(run_benchmark PRIVATE ${CUQUANTUM_ROOT}/include ${CUQUANTUM_ROOT})
+endif()
+if(DEFINED CUQUANTUM_INCLUDE_DIR)
+    target_include_directories(run_benchmark PRIVATE ${CUQUANTUM_INCLUDE_DIR})
+endif()
+
+target_link_libraries(run_benchmark PRIVATE 
+    ${CUSTATEVEC_LIB}
+    CUDA::cublas 
+    CUDA::cusolver 
+    Eigen3::Eigen
+)
+if(EXISTS "/usr/local/cuda/lib64")
+    target_link_options(run_benchmark PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
 endif()

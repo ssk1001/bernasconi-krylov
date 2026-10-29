@@ -126,6 +126,22 @@ def plot_dynamics(csv_path="data_processed/probability_dynamics_g_scan.csv",
         return
 
     df = pd.read_csv(csv_path)
+
+    # Normalize column names for cross-compatibility between connector and legacy outputs
+    rename_map = {
+        'time': 't',
+        'trap_energy': 'seed_energy',
+        'p_less': 'P_full',
+        'p_blind': 'P_blind',
+    }
+    for old_col, new_col in rename_map.items():
+        if old_col in df.columns and new_col not in df.columns:
+            df[new_col] = df[old_col]
+    if 'P_blind' not in df.columns:
+        df['P_blind'] = 0.0
+    if 'P_transverse' not in df.columns:
+        df['P_transverse'] = 0.0
+
     g_vals = sorted(df['g'].unique())
     n_spins = int(df['N'].iloc[0])
     has_trap_rank = 'trap_rank' in df.columns

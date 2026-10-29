@@ -18,8 +18,8 @@ cd "${SLURM_SUBMIT_DIR}"
 # 1. Environment setup (Spack modules + Conda)
 source scripts/setup_env.sh qsim
 
-# 2. Run Fixed-g Delayed Window Benchmark for N=30 (g in {0.3, 0.35, 0.45})
+# 2. Run Delayed Window Benchmark for N=30 (g in {0.3, 0.35, 0.45})
 echo "--- Running Delayed Window Benchmark (N=30) ---"
-./build/fixed_g_custatevec configs/n30_delayed_window_g035.cfg
+./build/run_benchmark configs/n30.ini
 
 echo "=== Job Completed with status $? at $(date) ==="

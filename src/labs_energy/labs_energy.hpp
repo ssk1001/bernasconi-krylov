@@ -1,170 +1,155 @@
-#ifndef SPIN_CACHE_HPP
-#define SPIN_CACHE_HPP
+#pragma once
 
-#include <vector>
-#include <unordered_map>
 #include <cstdint>
 #include <cstddef>
-#include <functional>
-#include <optional>
+#include <vector>
+#include <algorithm>
 
-// Configuration representing the binary spin state (0 -> -1, 1 -> +1)
 struct SpinState {
-    size_t num_bits;                // Total number of spins (N)
-    std::vector<uint64_t> bits;     // Bit-packed representation
+    uint64_t bits = 0;
 
-    bool operator==(const SpinState& other) const {
-        return num_bits == other.num_bits && bits == other.bits;
+    // Constructors
+    constexpr SpinState() = default;
+    constexpr explicit SpinState(uint64_t b) : bits(b) {}
+
+    // 1. Bit & Spin access
+    inline bool get_bit(size_t i) const {
+        return (bits >> i) & 1ULL;
     }
 
-    bool operator<(const SpinState& other) const {
-        if (num_bits != other.num_bits) return num_bits < other.num_bits;
-        return bits < other.bits;
+    inline int get_spin(size_t i) const {
+        // bit 0 -> +1, bit 1 -> -1 (or vice versa under global negation symmetry)
+        return ((bits >> i) & 1ULL) ? -1 : 1;
     }
 
-    inline int get_spin(size_t index) const {
-        size_t word_idx = index / 64;
-        size_t bit_idx = index % 64;
-        uint64_t bit = (bits[word_idx] >> bit_idx) & 1ULL;
-        return bit ? 1 : -1;
+    // 2. Bit flips (in-place and copy)
+    inline void flip(size_t i) {
+        bits ^= (1ULL << i);
     }
 
-    // Creates a copy with the bit at `index` inverted
-    SpinState flip_bit(size_t index) const {
-        SpinState neighbor = *this;
-        size_t word_idx = index / 64;
-        size_t bit_idx = index % 64;
-        neighbor.bits[word_idx] ^= (1ULL << bit_idx);
-        return neighbor;
+    inline SpinState flipped(size_t i) const {
+        return SpinState{bits ^ (1ULL << i)};
     }
 
+    // 3. Hamming distance (XOR + popcount)
+    inline int hamming_distance(const SpinState& other) const {
+        return __builtin_popcountll(bits ^ other.bits);
+    }
+
+    // Fast 64-bit reverse of the lowest n bits
+    static inline uint64_t reverse_bits(uint64_t x, int n) {
+        x = ((x >> 1) & 0x5555555555555555ULL) | ((x & 0x5555555555555555ULL) << 1);
+        x = ((x >> 2) & 0x3333333333333333ULL) | ((x & 0x3333333333333333ULL) << 2);
+        x = ((x >> 4) & 0x0F0F0F0F0F0F0F0FULL) | ((x & 0x0F0F0F0F0F0F0FULL) << 4);
+        x = ((x >> 8) & 0x00FF00FF00FF00FFULL) | ((x & 0x00FF00FF00FF00FFULL) << 8);
+        x = ((x >> 16) & 0x0000FFFF0000FFFFULL) | ((x & 0x0000FFFF0000FFFFULL) << 16);
+        x = (x >> 32) | (x << 32);
+        return x >> (64 - n);
+    }
+
+    // 4. Canonical representative under the order-8 symmetry group
+    inline SpinState canonical(int n) const {
+        const uint64_t mask = (n >= 64) ? ~0ULL : ((1ULL << n) - 1ULL);
+        const uint64_t alt_mask = 0x5555555555555555ULL & mask;
+
+        const uint64_t s0 = bits & mask;
+        const uint64_t s_alt = s0 ^ alt_mask;
+
+        // Base 4 orientations: [original, alternating, reversed, reversed-alternating]
+        uint64_t c[8];
+        c[0] = s0;
+        c[1] = s_alt;
+        c[2] = reverse_bits(s0, n);
+        c[3] = reverse_bits(s_alt, n);
+
+        // Global negations (T1) of all 4
+        c[4] = (~c[0]) & mask;
+        c[5] = (~c[1]) & mask;
+        c[6] = (~c[2]) & mask;
+        c[7] = (~c[3]) & mask;
+
+        uint64_t min_bits = c[0];
+        for (int i = 1; i < 8; ++i) {
+            if (c[i] < min_bits) {
+                min_bits = c[i];
+            }
+        }
+        return SpinState{min_bits};
+    }
+
+    // 5. Comparators (for std::set, std::map)
+    inline bool operator==(const SpinState& other) const { return bits == other.bits; }
+    inline bool operator!=(const SpinState& other) const { return bits != other.bits; }
+    inline bool operator<(const SpinState& other) const { return bits < other.bits; }
 };
 
-// Custom Hash operator for SpinState
+// 6. Hasher (for std::unordered_set, std::unordered_map)
 struct SpinStateHash {
-    std::size_t operator()(const SpinState& state) const {
-        std::size_t seed = state.num_bits;
-        for (uint64_t chunk : state.bits) {
-            seed ^= std::hash<uint64_t>{}(chunk) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-        }
-        return seed;
+    inline size_t operator()(const SpinState& s) const noexcept {
+        uint64_t x = s.bits;
+        x ^= x >> 30;
+        x *= 0xbf58476d1ce4e5b9ULL;
+        x ^= x >> 27;
+        x *= 0x94d049bb133111ebULL;
+        x ^= x >> 31;
+        return static_cast<size_t>(x);
     }
 };
 
-using SpinCache = std::unordered_map<SpinState, std::vector<int64_t>, SpinStateHash>;
-
-namespace SpinLib {
-    namespace detail {
-
-        struct SpinNeighborHit {
-            size_t flipped_bit_index;
-            const SpinState* state_ptr;
-            const std::vector<int64_t>* C_k_ptr;
-        };
-
-        // Full O(N^2) recalculation from scratch[cite: 1]
-        inline std::vector<int64_t> calculate_C_k_scratch(const SpinState& state) {
-            size_t N = state.num_bits;
-            std::vector<int64_t> C(N, 0);
-
-            for (size_t k = 1; k < N; ++k) {
-                int64_t sum = 0;
-                for (size_t i = 0; i < N - k; ++i) {
-                    sum += state.get_spin(i) * state.get_spin(i + k);
-                }
-                C[k] = sum;
-            }
-            return C;
+namespace std {
+    template <>
+    struct hash<SpinState> {
+        size_t operator()(const SpinState& s) const noexcept {
+            return SpinStateHash{}(s);
         }
+    };
+}
 
-        // O(N) spin flip update from a 1-flip neighbor[cite: 1]
-        inline std::vector<int64_t> update_C_k_from_neighbor(
-            const SpinState& target_state,
-            const std::vector<int64_t>& neighbor_C_k,
-            size_t flipped_bit_index)
-        {
-            size_t N = target_state.num_bits;
-            std::vector<int64_t> C(N, 0);
+class LabsEvaluator {
+private:
+    int n;
+    uint64_t full_mask;
 
-            int s_m_prime = target_state.get_spin(flipped_bit_index); 
+public:
+    explicit LabsEvaluator(int system_size)
+        : n(system_size),
+          full_mask((system_size >= 64) ? ~0ULL : ((1ULL << system_size) - 1ULL)) {}
 
-            for (size_t k = 1; k < N; ++k) {
-                int left_neighbor = (flipped_bit_index >= k) 
-                    ? target_state.get_spin(flipped_bit_index - k) : 0;
-                int right_neighbor = (flipped_bit_index + k < N) 
-                    ? target_state.get_spin(flipped_bit_index + k) : 0;
+    int get_n() const { return n; }
 
-                C[k] = neighbor_C_k[k] + 2 * s_m_prime * (left_neighbor + right_neighbor);
-            }
+    // Direct, zero-allocation energy calculation via bit-parallel Popcount (~20ns)
+    int64_t calcEnergy(const SpinState& state) const {
+        uint64_t b = state.bits & full_mask;
+        int64_t total_energy = 0;
 
-            return C;
+        for (int k = 1; k < n; ++k) {
+            uint64_t mask_k = (1ULL << (n - k)) - 1ULL;
+            int diffs = __builtin_popcountll((b ^ (b >> k)) & mask_k);
+            int64_t c_k = static_cast<int64_t>(n - k) - 2 * diffs;
+            total_energy += c_k * c_k;
         }
-
-        // Calculates overall system energy E(s) = sum C_k(s)^2[cite: 1]
-        inline int64_t calculate_energy(const std::vector<int64_t>& C_k) {
-            int64_t energy = 0;
-            for (size_t k = 1; k < C_k.size(); ++k) {
-                energy += C_k[k] * C_k[k];
-            }
-            return energy;
-        }
-
-        // Searches cache for any 1-spin-flip neighbor
-        inline std::optional<SpinNeighborHit> search_cached_neighbor(
-            const SpinCache& cache, 
-            const SpinState& state) 
-        {
-            for (size_t i = 0; i < state.num_bits; ++i) {
-                SpinState neighbor = state.flip_bit(i);
-                auto it = cache.find(neighbor);
-
-                if (it != cache.end()) {
-                    return SpinNeighborHit{
-                        i,
-                        &(it->first),
-                        &(it->second)
-                    };
-                }
-            }
-            return std::nullopt;
-        }
-
-        // Pipeline: Exact Match -> Spin Flip Update -> Scratch Calculation
-        inline const std::vector<int64_t>& fetch_or_compute_C_k(
-            SpinCache& cache, 
-            const SpinState& state) 
-        {
-            auto it = cache.find(state);
-            if (it != cache.end()) {
-                return it->second;
-            }
-
-            auto neighbor_hit = search_cached_neighbor(cache, state);
-            std::vector<int64_t> C_k;
-
-            if (neighbor_hit.has_value()) {
-                C_k = update_C_k_from_neighbor(
-                    state, 
-                    *(neighbor_hit->C_k_ptr), 
-                    neighbor_hit->flipped_bit_index
-                );
-            } else {
-                C_k = calculate_C_k_scratch(state);
-            }
-
-            auto inserted = cache.emplace(state, std::move(C_k));
-            return inserted.first->second;
-        }
-
-    } // namespace detail
-
-    // Primary Public Interface
-    inline int64_t get_energy(SpinCache& cache, const SpinState& state) {
-        const auto& C_k = detail::fetch_or_compute_C_k(cache, state);
-        return detail::calculate_energy(C_k);
+        return total_energy;
     }
 
+    inline int64_t energy(const SpinState& state) const {
+        return calcEnergy(state);
+    }
 
-} // namespace SpinLib
+    // Autocorrelation vector C_k calculation
+    std::vector<int64_t> calcCk(const SpinState& state) const {
+        uint64_t b = state.bits & full_mask;
+        std::vector<int64_t> C(n, 0);
 
-#endif // SPIN_CACHE_HPP
+        for (int k = 1; k < n; ++k) {
+            uint64_t mask_k = (1ULL << (n - k)) - 1ULL;
+            int diffs = __builtin_popcountll((b ^ (b >> k)) & mask_k);
+            C[k] = static_cast<int64_t>(n - k) - 2 * diffs;
+        }
+        return C;
+    }
+
+    // Canonical representative delegate
+    SpinState get_canonical(const SpinState& state) const {
+        return state.canonical(n);
+    }
+};

@@ -1,3 +1,12 @@
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// This legacy executor is obsolete and will be replaced by new executors.
+// Superseded components:
+//   - Classical: src/classical/classical.cuh
+//   - Diagonalizer: src/subspace/diagonalizer.cuh
+//   - Sampler: src/sampling/sampler.cuh
+// ============================================================================
+
 #include <iostream>
 #include <vector>
 #include <iomanip>

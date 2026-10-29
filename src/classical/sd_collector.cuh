@@ -1,5 +1,11 @@
 #pragma once
 
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// This file is superseded by src/classical/classical.cuh (ClassicalOptimizer::collect_distinct_minima_*).
+// Do not use in new implementations.
+// ============================================================================
+
 #include <vector>
 #include <unordered_set>
 #include <chrono>

@@ -1,3 +1,9 @@
+// ============================================================================
+// DEPRECATED / REDUNDANT
+// This file is superseded by src/classical/classical.cuh.
+// Do not use in new implementations.
+// ============================================================================
+
 #include <iostream>
 #include <vector>
 #include <chrono>

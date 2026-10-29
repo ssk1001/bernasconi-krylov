@@ -1,95 +1,123 @@
-#include <cmath>
-#include <cuda_runtime.h>
 #include <iostream>
 #include <vector>
-#include "../src/subspace/lanczos.cuh" 
+#include <iomanip>
+#include <cassert>
+#include <cmath>
+#include <cuda_runtime.h>
 
-int main(int argc, char **argv) {
-    // Optional: Select the specific GPU you want to run on if multiple exist
-    int num_devices = 0;
-    cudaGetDeviceCount(&num_devices);
-    if (num_devices > 0) {
-        cudaSetDevice(0); 
-    } else {
-        std::cerr << "Error: No CUDA-capable devices found." << std::endl;
-        return 1;
-    }
-     double g_transverse = 2.0;
-    int num_bits = 4; 
+#include "../src/subspace/diagonalizer.cuh"
 
-    // If an argument is provided, parse it
-    if (argc > 1) {
-        num_bits = std::atoi(argv[1]);
-        if (num_bits <= 0 || num_bits > 30) { // Add a safety guard for GPU memory limits
-            std::cerr << "Error: Number of bits must be between 1 and 30.\n";
-            return 1;
+// Test 1: Full Space Lanczos vs Dense ED
+void test_fullspace_lanczos_vs_ed() {
+    std::cout << "[Test 1] Testing Full Space Lanczos vs Dense ED..." << std::endl;
+    int n = 4;
+    double g = 0.5;
+
+    Diagonalizer diag;
+
+    // 1. Solve via Dense ED (Ground Truth)
+    DiagConfig ed_cfg;
+    ed_cfg.method = DiagMethod::ExactDense;
+    ed_cfg.normalize_by_n = true;
+    Eigensolution ed_sol = diag.solve(n, g, ed_cfg);
+
+    // 2. Solve via GPU Lanczos
+    DiagConfig lanczos_cfg;
+    lanczos_cfg.method = DiagMethod::Lanczos;
+    lanczos_cfg.max_krylov_dim = 30;
+    lanczos_cfg.normalize_by_n = true;
+    Eigensolution lanczos_sol = diag.solve(n, g, lanczos_cfg);
+
+    std::cout << "  Dense ED Ground Energy   : " << std::fixed << std::setprecision(8) 
+              << ed_sol.ground_energy() << "\n";
+    std::cout << "  GPU Lanczos Ground Energy: " 
+              << lanczos_sol.ground_energy() << "\n";
+
+    // Energies must match to high numerical precision
+    double diff = std::abs(ed_sol.ground_energy() - lanczos_sol.ground_energy());
+    assert(diff < 1e-6);
+
+    // Verify residual ||H v - E v||_2 for the Lanczos solution
+    int dim = 1 << n;
+    LabsEvaluator eval(n);
+    double scale = 1.0 / static_cast<double>(n);
+    double res_sq = 0.0;
+
+    const auto& v = lanczos_sol.ground_state();
+    double E = lanczos_sol.ground_energy();
+
+    for (int i = 0; i < dim; ++i) {
+        double Hv_i = (eval.calcEnergy(SpinState{static_cast<uint64_t>(i)}) * scale) * v[i];
+        for (int j = 0; j < n; ++j) {
+            int nbr = i ^ (1 << j);
+            Hv_i -= g * v[nbr];
         }
+        double r_i = Hv_i - E * v[i];
+        res_sq += r_i * r_i;
     }
- 
-    std::cout << "Launching matrix-free GPU Eigensolver on " << num_bits 
-              << " bits using GPU 0..." << std::endl;
+    double res_norm = std::sqrt(res_sq);
+    std::cout << "  Lanczos Eigen-residual ||H v - E v||_2: " << std::scientific << res_norm << "\n";
+    assert(res_norm < 1e-5);
 
-    // 1. Test Full Space Endpoint
-    auto result_full = SpinEigensolver<SpinState, double>::compute_ground_state(num_bits, g_transverse);
-    std::cout << "[Full Space] Ground State Energy: " << result_full.energy << std::endl;
+    std::cout << "  --> PASSED: GPU Lanczos matches Dense ED with near-zero residual!\n" << std::endl;
+}
 
-    // ------------------------------------------------------------
-    // Compute ||H v - E v||_2
-    // ------------------------------------------------------------
+// Test 2: Subspace Lanczos vs Subspace Dense ED
+void test_subspace_lanczos_vs_ed() {
+    std::cout << "[Test 2] Testing Subspace Lanczos vs Subspace Dense ED..." << std::endl;
+    int n = 6;
+    double g = 0.35;
 
-    const int N = 1 << num_bits;
-
-    double residual_norm_squared = 0.0;
-    SpinCache sc;
-    for (int i = 0; i < N; ++i) {
-
-        // Get the diagonal contribution.
-        //
-        // This must use the same diagonal calculation/order as
-        // the full-space solver.
-        SpinState state{
-            static_cast<uint32_t>(num_bits),
-            {static_cast<uint64_t>(i)}
-        };
-
-        double diag =
-            static_cast<double>(SpinLib::get_energy(sc, state))
-            / static_cast<double>(num_bits);
-
-        // (H v)_i
-        double Hv_i = diag * result_full.state_vector[i];
-
-        // Transverse-field contribution:
-        //
-        // H_ij = -g whenever j = i XOR (1 << bit)
-        for (int j = 0; j < static_cast<int>(num_bits); ++j) {
-            int nxt = i ^ (1 << j);
-
-            Hv_i -= g_transverse *
-                    result_full.state_vector[nxt];
-        }
-
-        // r_i = (H v)_i - E v_i
-        double residual_i =
-            Hv_i - result_full.energy *
-                    result_full.state_vector[i];
-
-        residual_norm_squared += residual_i * residual_i;
-    }
-
-    double residual_norm = std::sqrt(residual_norm_squared);
-
-    std::cout << "[Full Space] Residual Norm: "
-              << residual_norm << std::endl;
-
-    // 2. Test Subspace Endpoint (Creating a dummy basis of even integer states)
+    // Construct a subspace basis of 16 states
     std::vector<SpinState> basis;
-    for (uint64_t i = 0; i < (1ULL << num_bits); i += 2) {
-        basis.push_back({static_cast<uint32_t>(num_bits), {i}}); 
+    for (uint64_t i = 0; i < 16; ++i) {
+        basis.push_back(SpinState{i * 3ULL + 1ULL});
     }
 
-    auto result_subspace = SpinEigensolver<SpinState, double>::compute_ground_state(basis, g_transverse);
-    std::cout << "[Subspace]   Ground State Energy: " << result_subspace.energy << std::endl;
+    Diagonalizer diag;
 
+    // 1. Subspace Dense ED
+    DiagConfig ed_cfg;
+    ed_cfg.method = DiagMethod::ExactDense;
+    ed_cfg.normalize_by_n = true;
+    Eigensolution ed_sol = diag.solve(basis, g, n, ed_cfg);
+
+    // 2. Subspace GPU Lanczos
+    DiagConfig lanczos_cfg;
+    lanczos_cfg.method = DiagMethod::Lanczos;
+    lanczos_cfg.max_krylov_dim = 16;
+    lanczos_cfg.normalize_by_n = true;
+    Eigensolution lanczos_sol = diag.solve(basis, g, n, lanczos_cfg);
+
+    std::cout << "  Subspace Dim=" << basis.size() << "\n";
+    std::cout << "  Dense ED Subspace Energy   : " << std::fixed << std::setprecision(8) 
+              << ed_sol.ground_energy() << "\n";
+    std::cout << "  GPU Lanczos Subspace Energy: " 
+              << lanczos_sol.ground_energy() << "\n";
+
+    double diff = std::abs(ed_sol.ground_energy() - lanczos_sol.ground_energy());
+    assert(diff < 1e-6);
+
+    std::cout << "  --> PASSED: Subspace Lanczos matches Subspace Dense ED!\n" << std::endl;
+}
+
+int main() {
+    std::cout << "=====================================================\n";
+    std::cout << "              Testing GPU Lanczos Solver             \n";
+    std::cout << "=====================================================\n";
+
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        std::cout << "  [Notice] No CUDA device detected. Skipping GPU Lanczos tests.\n" << std::endl;
+        return 0;
+    }
+
+    test_fullspace_lanczos_vs_ed();
+    test_subspace_lanczos_vs_ed();
+
+    std::cout << "=====================================================\n";
+    std::cout << "       ALL GPU LANCZOS TESTS PASSED SUCCESSFULLY!    \n";
+    std::cout << "=====================================================" << std::endl;
     return 0;
 }
