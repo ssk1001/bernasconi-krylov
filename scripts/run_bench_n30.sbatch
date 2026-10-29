@@ -18,7 +18,10 @@ cd "${SLURM_SUBMIT_DIR}"
 # 1. Environment setup (Spack modules + Conda)
 source scripts/setup_env.sh cuquantum_env
 
-# 2. Run Delayed Window Benchmark for N=30 (g in {0.3, 0.35, 0.45})
+# 2. Ensure directories exist
+mkdir -p data_processed seeds
+
+# 3. Run Delayed Window Benchmark for N=30 (g in {0.3, 0.35, 0.45})
 echo "--- Running Delayed Window Benchmark (N=30) ---"
 ./build/run_benchmark configs/n30.ini
 

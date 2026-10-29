@@ -28,9 +28,13 @@ struct SingleTrapBenchmark {
     size_t trap_rank = 0;
     SpinState trap_state;
     int64_t trap_energy = 0; // E_0
+    int d_min = 0;           // Barrier distance to nearest state with E < E_0
 
     // Quantum dynamics metrics
-    double window_avg_p_less = 0.0; // Noise-free window-averaged P_<
+    double window_avg_p_less = 0.0;     // Noise-free window-averaged P_<
+    double window_avg_dh = 0.0;         // Quantum diffusion window-averaged <dH>
+    double initial_rise_rate_avg = 0.0; // Mean finite difference slope while increasing: P_<(t_peak1) / t_peak1
+    double initial_rise_rate_max = 0.0; // Max instantaneous slope: max delta P_< / delta t
     size_t quantum_improved_shots = 0;
     size_t quantum_total_shots = 0;
     double quantum_success_rate = 0.0;
@@ -39,6 +43,7 @@ struct SingleTrapBenchmark {
     double quantum_time_sec = 0.0;
     std::vector<double> time_points;
     std::vector<double> p_less_history;
+    std::vector<double> dh_history;     // Instantaneous <dH(t)> trajectory
     double p_blind = 0.0;
     double peak_p_less = 0.0;
     double peak_time = 0.0;
@@ -74,14 +79,10 @@ public:
     /// Resolves the directory for seed files, checking configured dir, current working dir, and parent dir
     static std::string resolve_seeds_dir(const std::string& configured_dir = "seeds") {
         namespace fs = std::filesystem;
+        if (!configured_dir.empty() && configured_dir != "seeds") {
+            return configured_dir;
+        }
         try {
-            if (!configured_dir.empty() && fs::exists(configured_dir) && fs::is_directory(configured_dir)) {
-                return configured_dir;
-            }
-            std::string parent_rel = "../" + configured_dir;
-            if (!configured_dir.empty() && fs::exists(parent_rel) && fs::is_directory(parent_rel)) {
-                return parent_rel;
-            }
             if (fs::exists("seeds") && fs::is_directory("seeds")) {
                 return "seeds";
             }
@@ -89,10 +90,10 @@ public:
                 return "../seeds";
             }
             if (!fs::exists("CMakeLists.txt") && fs::exists("../CMakeLists.txt")) {
-                return "../" + (configured_dir.empty() ? "seeds" : configured_dir);
+                return "../seeds";
             }
         } catch (...) {}
-        return configured_dir.empty() ? "seeds" : configured_dir;
+        return "seeds";
     }
 
     /// Searches for an existing seed file for system size n across known naming patterns and directories
@@ -327,6 +328,11 @@ public:
 
         bench.time_points = std::move(res.time_points);
         bench.p_less_history = std::move(res.p_less_history);
+        bench.dh_history = std::move(res.dh_history);
+        bench.window_avg_dh = res.window_avg_dh;
+        bench.initial_rise_rate_avg = res.initial_rise_rate_avg;
+        bench.initial_rise_rate_max = res.initial_rise_rate_max;
+        if (bench.d_min == 0) bench.d_min = res.d_min;
         bench.quantum_improved_shots = res.improved_shots;
         bench.quantum_total_shots = res.total_shots_collected;
         bench.quantum_success_rate = res.success_rate;
@@ -348,6 +354,10 @@ public:
             Eigensolution sol = diag.solve_fullspace_dense(n, g, d_cfg);
             LabsEvaluator eval(n);
 
+            if (bench.d_min == 0) {
+                bench.d_min = eval.compute_d_min(bench.trap_state, bench.trap_energy);
+            }
+
             // Precompute LABS energies for all basis states
             std::vector<int64_t> energies(dim);
             int64_t count_improved = 0;
@@ -367,27 +377,33 @@ public:
 
             bench.time_points = q_cfg.sample_times();
             bench.p_less_history.resize(bench.time_points.size(), 0.0);
+            bench.dh_history.resize(bench.time_points.size(), 0.0);
             double peak_p = 0.0;
             double peak_t = 0.0;
 
             for (size_t ti = 0; ti < bench.time_points.size(); ++ti) {
                 double t = bench.time_points[ti];
                 double p_less = 0.0;
+                double dh_val = 0.0;
 
                 for (int64_t s = 0; s < dim; ++s) {
-                    if (energies[s] < bench.trap_energy) {
-                        double re = 0.0, im = 0.0;
-                        for (int64_t j = 0; j < dim && j < static_cast<int64_t>(sol.pairs.size()); ++j) {
-                            double angle = -sol.pairs[j].energy * t;
-                            double v_sj = sol.pairs[j].state_vector[s];
-                            double ampl = c_coeff[j] * v_sj;
-                            re += ampl * std::cos(angle);
-                            im += ampl * std::sin(angle);
-                        }
-                        p_less += (re * re + im * im);
+                    double re = 0.0, im = 0.0;
+                    for (int64_t j = 0; j < dim && j < static_cast<int64_t>(sol.pairs.size()); ++j) {
+                        double angle = -sol.pairs[j].energy * t;
+                        double v_sj = sol.pairs[j].state_vector[s];
+                        double ampl = c_coeff[j] * v_sj;
+                        re += ampl * std::cos(angle);
+                        im += ampl * std::sin(angle);
                     }
+                    double ampl_sq = (re * re + im * im);
+                    if (energies[s] < bench.trap_energy) {
+                        p_less += ampl_sq;
+                    }
+                    int flips = __builtin_popcountll(static_cast<uint64_t>(s ^ s0));
+                    dh_val += ampl_sq * static_cast<double>(flips);
                 }
                 bench.p_less_history[ti] = p_less;
+                bench.dh_history[ti] = dh_val;
                 if (p_less > peak_p) {
                     peak_p = p_less;
                     peak_t = t;
@@ -395,6 +411,44 @@ public:
             }
             bench.peak_p_less = peak_p;
             bench.peak_time = peak_t;
+
+            // Compute initial rise rates:
+            // average finite difference slope while monotonically increasing: P_<(t_peak1) / t_peak1
+            // and max instantaneous slope
+            if (bench.p_less_history.size() >= 2) {
+                size_t first_drop = bench.p_less_history.size() - 1;
+                for (size_t i = 1; i < bench.p_less_history.size(); ++i) {
+                    if (bench.p_less_history[i] < bench.p_less_history[i - 1]) {
+                        first_drop = i - 1;
+                        break;
+                    }
+                }
+                double t_p1 = bench.time_points[first_drop];
+                double p_p1 = bench.p_less_history[first_drop];
+                bench.initial_rise_rate_avg = (t_p1 > 0.0) ? (p_p1 / t_p1) : 0.0;
+
+                double max_slope = 0.0;
+                for (size_t i = 0; i < first_drop; ++i) {
+                    double dt_step = bench.time_points[i + 1] - bench.time_points[i];
+                    if (dt_step > 1e-9) {
+                        double slope = (bench.p_less_history[i + 1] - bench.p_less_history[i]) / dt_step;
+                        if (slope > max_slope) max_slope = slope;
+                    }
+                }
+                bench.initial_rise_rate_max = max_slope;
+            }
+
+            // Window avg dH
+            double avg_start = q_cfg.record_trajectory ? 0.0 : q_cfg.t_start;
+            double sum_dh = 0.0;
+            size_t count_dh = 0;
+            for (size_t i = 0; i < bench.time_points.size() && i < bench.dh_history.size(); ++i) {
+                if (bench.time_points[i] >= avg_start - 1e-9) {
+                    sum_dh += bench.dh_history[i];
+                    count_dh++;
+                }
+            }
+            bench.window_avg_dh = (count_dh > 0) ? (sum_dh / count_dh) : (bench.dh_history.empty() ? 0.0 : bench.dh_history.back());
         } else {
             if (verbose) {
                 std::cout << "[Connector Notice] cuStateVec not available in CPU build. "
@@ -402,6 +456,7 @@ public:
             }
             bench.time_points = q_cfg.sample_times();
             bench.p_less_history.assign(bench.time_points.size(), 0.0);
+            bench.dh_history.assign(bench.time_points.size(), 0.0);
         }
 #endif
 
@@ -438,7 +493,8 @@ public:
             throw std::runtime_error("BenchmarkConnector: Cannot open results CSV for writing: " + path);
         }
 
-        file << "N,g,trap_rank,trap_energy,window_avg_p_less,peak_p_less,peak_time,p_blind,"
+        file << "N,g,trap_rank,trap_energy,d_min,window_avg_p_less,window_avg_dh,"
+             << "initial_rise_rate_avg,initial_rise_rate_max,peak_p_less,peak_time,p_blind,"
              << "best_d,best_d_rate,best_d_successes,best_d_trials,best_d_evals,"
              << "restart_rate,restart_successes,restart_trials,restart_evals,"
              << "quantum_time_sec,kick_time_sec,restart_time_sec,trap_bits\n";
@@ -448,7 +504,11 @@ public:
                  << r.g << ","
                  << r.trap_rank << ","
                  << r.trap_energy << ","
+                 << r.d_min << ","
                  << std::scientific << std::setprecision(6) << r.window_avg_p_less << ","
+                 << std::fixed << std::setprecision(4) << r.window_avg_dh << ","
+                 << std::scientific << std::setprecision(6) << r.initial_rise_rate_avg << ","
+                 << std::scientific << std::setprecision(6) << r.initial_rise_rate_max << ","
                  << r.peak_p_less << ","
                  << std::fixed << std::setprecision(4) << r.peak_time << ","
                  << std::scientific << std::setprecision(6) << r.p_blind << ","
@@ -482,18 +542,155 @@ public:
             throw std::runtime_error("BenchmarkConnector: Cannot open time series CSV: " + path);
         }
 
-        file << "N,g,trap_rank,trap_energy,time,p_less,p_blind\n";
+        file << "N,g,trap_rank,trap_energy,time,p_less,dH,p_blind\n";
         for (const auto& r : results) {
             for (size_t i = 0; i < r.time_points.size() && i < r.p_less_history.size(); ++i) {
+                double dh = (i < r.dh_history.size()) ? r.dh_history[i] : 0.0;
                 file << r.n << ","
                      << r.g << ","
                      << r.trap_rank << ","
                      << r.trap_energy << ","
                      << std::fixed << std::setprecision(4) << r.time_points[i] << ","
                      << std::scientific << std::setprecision(6) << r.p_less_history[i] << ","
+                     << std::fixed << std::setprecision(4) << dh << ","
                      << std::scientific << std::setprecision(6) << r.p_blind << "\n";
             }
         }
+    }
+
+    void export_structured_json(
+        const std::string& path,
+        const std::vector<SingleTrapBenchmark>& results,
+        int n_override = 0) const
+    {
+        std::filesystem::path p(path);
+        if (p.has_parent_path()) {
+            std::filesystem::create_directories(p.parent_path());
+        }
+
+        std::ofstream file(path);
+        if (!file.is_open()) {
+            throw std::runtime_error("BenchmarkConnector: Cannot open structured JSON for writing: " + path);
+        }
+
+        // Group results by (n, trap_rank)
+        std::map<std::pair<int, size_t>, std::vector<SingleTrapBenchmark>> grouped_traps;
+        for (const auto& r : results) {
+            grouped_traps[{r.n, r.trap_rank}].push_back(r);
+        }
+
+        int sys_n = n_override;
+        if (sys_n == 0 && !results.empty()) {
+            sys_n = results.front().n;
+        }
+
+        file << "{\n";
+        file << "  \"system\": {\n";
+        file << "    \"N\": " << sys_n << ",\n";
+        file << "    \"num_seeds\": " << grouped_traps.size() << "\n";
+        file << "  },\n";
+        file << "  \"seeds\": [\n";
+
+        size_t trap_idx = 0;
+        for (auto it = grouped_traps.begin(); it != grouped_traps.end(); ++it, ++trap_idx) {
+            const auto& trap_list = it->second;
+            if (trap_list.empty()) continue;
+            const auto& first = trap_list.front();
+
+            file << "    {\n";
+            file << "      \"N\": " << first.n << ",\n";
+            file << "      \"trap_rank\": " << first.trap_rank << ",\n";
+            file << "      \"trap_state_hex\": \"0x" << std::hex << std::uppercase << first.trap_state.bits << std::dec << "\",\n";
+            file << "      \"trap_energy_E0\": " << first.trap_energy << ",\n";
+            file << "      \"d_min\": " << first.d_min << ",\n";
+
+            // Classical baselines
+            file << "      \"classical_baselines\": {\n";
+            file << "        \"best_d\": " << first.best_d << ",\n";
+            file << "        \"best_d_rate\": " << std::scientific << std::setprecision(6) << first.best_d_rate << ",\n";
+            file << "        \"best_d_successes\": " << first.best_d_successes << ",\n";
+            file << "        \"best_d_trials\": " << first.best_d_trials << ",\n";
+            file << "        \"best_d_evals\": " << first.best_d_evals << ",\n";
+
+            file << "        \"rates_by_d\": {";
+            size_t di = 0;
+            for (const auto& kv : first.rate_by_d) {
+                file << (di > 0 ? ", " : "") << "\"" << kv.first << "\": " << std::scientific << std::setprecision(6) << kv.second;
+                di++;
+            }
+            file << "},\n";
+
+            file << "        \"trials_by_d\": {";
+            di = 0;
+            for (const auto& kv : first.trials_by_d) {
+                file << (di > 0 ? ", " : "") << "\"" << kv.first << "\": " << kv.second;
+                di++;
+            }
+            file << "},\n";
+
+            file << "        \"evals_by_d\": {";
+            di = 0;
+            for (const auto& kv : first.evals_by_d) {
+                file << (di > 0 ? ", " : "") << "\"" << kv.first << "\": " << kv.second;
+                di++;
+            }
+            file << "},\n";
+
+            file << "        \"restart_rate\": " << std::scientific << std::setprecision(6) << first.restart_rate << ",\n";
+            file << "        \"restart_successes\": " << first.restart_successes << ",\n";
+            file << "        \"restart_trials\": " << first.restart_trials << ",\n";
+            file << "        \"restart_evals\": " << first.restart_evals << ",\n";
+            file << "        \"kick_time_sec\": " << std::fixed << std::setprecision(4) << first.kick_time_sec << ",\n";
+            file << "        \"restart_time_sec\": " << std::fixed << std::setprecision(4) << first.restart_time_sec << "\n";
+            file << "      },\n";
+
+            // Quantum dynamics by g
+            file << "      \"quantum_dynamics\": {\n";
+            for (size_t gi = 0; gi < trap_list.size(); ++gi) {
+                const auto& q = trap_list[gi];
+                std::ostringstream g_str;
+                g_str << std::fixed << std::setprecision(2) << q.g;
+
+                file << "        \"" << g_str.str() << "\": {\n";
+                file << "          \"g\": " << std::fixed << std::setprecision(2) << q.g << ",\n";
+                file << "          \"window_avg_p_less\": " << std::scientific << std::setprecision(6) << q.window_avg_p_less << ",\n";
+                file << "          \"window_avg_dH\": " << std::fixed << std::setprecision(4) << q.window_avg_dh << ",\n";
+                file << "          \"initial_rise_rate_avg\": " << std::scientific << std::setprecision(6) << q.initial_rise_rate_avg << ",\n";
+                file << "          \"initial_rise_rate_max\": " << std::scientific << std::setprecision(6) << q.initial_rise_rate_max << ",\n";
+                file << "          \"peak_p_less\": " << std::scientific << std::setprecision(6) << q.peak_p_less << ",\n";
+                file << "          \"peak_time\": " << std::fixed << std::setprecision(4) << q.peak_time << ",\n";
+                file << "          \"p_blind\": " << std::scientific << std::setprecision(6) << q.p_blind << ",\n";
+
+                // Time array
+                file << "          \"time_array\": [";
+                for (size_t ti = 0; ti < q.time_points.size(); ++ti) {
+                    file << (ti > 0 ? ", " : "") << std::fixed << std::setprecision(4) << q.time_points[ti];
+                }
+                file << "],\n";
+
+                // P_less array
+                file << "          \"p_less_array\": [";
+                for (size_t ti = 0; ti < q.p_less_history.size(); ++ti) {
+                    file << (ti > 0 ? ", " : "") << std::scientific << std::setprecision(6) << q.p_less_history[ti];
+                }
+                file << "],\n";
+
+                // dH array
+                file << "          \"dH_array\": [";
+                for (size_t ti = 0; ti < q.dh_history.size(); ++ti) {
+                    file << (ti > 0 ? ", " : "") << std::fixed << std::setprecision(4) << q.dh_history[ti];
+                }
+                file << "],\n";
+
+                file << "          \"quantum_time_sec\": " << std::fixed << std::setprecision(4) << q.quantum_time_sec << "\n";
+                file << "        }" << (gi + 1 < trap_list.size() ? "," : "") << "\n";
+            }
+            file << "      }\n";
+
+            file << "    }" << (trap_idx + 1 < grouped_traps.size() ? "," : "") << "\n";
+        }
+        file << "  ]\n";
+        file << "}\n";
     }
 
     void print_comparison_table(
@@ -595,6 +792,7 @@ public:
                 n, cfg.traps, cfg.system.seed_base, use_gpu, cfg.output.verbose
             );
 
+            LabsEvaluator eval(n);
             ClassicalOptimizer opt(n, cfg.system.seed_base);
             std::vector<SingleTrapBenchmark> n_results;
 
@@ -608,6 +806,7 @@ public:
                 base_bench.trap_rank = rank + 1;
                 base_bench.trap_state = trap_fam.sample_state;
                 base_bench.trap_energy = trap_fam.energy;
+                base_bench.d_min = eval.compute_d_min(base_bench.trap_state, base_bench.trap_energy);
 
                 bool should_run_classical = cfg.quantum.run_classical && 
                     (cfg.classical.kick_trials_per_d > 0 || cfg.classical.restart_trials > 0);
@@ -616,7 +815,7 @@ public:
                     if (cfg.output.verbose) {
                         std::cout << "\n======================================================================\n";
                         std::cout << " [Classical Baselines] Benchmarking Trap #" << base_bench.trap_rank
-                                  << " (E0 = " << base_bench.trap_energy << ") for N = " << n << "\n";
+                                  << " (E0 = " << base_bench.trap_energy << ", d_min = " << base_bench.d_min << ") for N = " << n << "\n";
                         std::cout << "======================================================================\n";
                     }
                     run_classical_baselines(base_bench, opt, cfg.classical, use_gpu, cfg.output.verbose);
@@ -633,7 +832,7 @@ public:
                     if (cfg.output.verbose) {
                         std::cout << "\n----------------------------------------------------------------------\n";
                         std::cout << " [Quantum Dynamics] Simulating Trap #" << bench.trap_rank
-                                  << " (E0 = " << bench.trap_energy << ") with N = " << n << ", g = " << g << "\n";
+                                  << " (E0 = " << bench.trap_energy << ", d_min = " << bench.d_min << ") with N = " << n << ", g = " << g << "\n";
                         std::cout << "----------------------------------------------------------------------\n";
                     }
 
@@ -648,23 +847,29 @@ public:
             // 3. Export outputs for this system size N
             std::string res_path = cfg.output.get_results_path(n);
             std::string dyn_path = cfg.output.get_time_series_path(n);
+            std::string json_path = cfg.output.get_structured_json_path(n);
 
             if (cfg.output.verbose) {
                 std::cout << "[Connector] Exporting N=" << n << " results to: " << res_path << "\n";
                 std::cout << "[Connector] Exporting N=" << n << " dynamics to: " << dyn_path << "\n";
+                std::cout << "[Connector] Exporting N=" << n << " structured JSON to: " << json_path << "\n";
             }
 
             export_results_csv(res_path, n_results);
             export_time_series_csv(dyn_path, n_results);
+            export_structured_json(json_path, n_results, n);
         }
 
         // Export overall summary
         std::string summary_path = cfg.output.get_summary_path();
+        std::string all_json_path = cfg.output.get_all_structured_json_path();
         if (cfg.output.verbose) {
             std::cout << "[Connector] Exporting overall summary to: " << summary_path << "\n";
+            std::cout << "[Connector] Exporting all structured JSON to: " << all_json_path << "\n";
             print_comparison_table(all_results);
         }
         export_results_csv(summary_path, all_results);
+        export_structured_json(all_json_path, all_results, 0);
 
         return all_results;
     }

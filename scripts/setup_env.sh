@@ -7,6 +7,11 @@
 #   source scripts/setup_env.sh [conda_env_name]   (default conda env: cuquantum_env)
 # ==============================================================================
 
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "[WARN] setup_env.sh was executed directly instead of sourced."
+    echo "       Please use: source scripts/setup_env.sh [conda_env_name]"
+fi
+
 ENV_NAME="${1:-cuquantum_env}"
 
 echo "======================================================================"
@@ -18,11 +23,11 @@ if command -v module &> /dev/null; then
     echo "[MODULES] Purging existing modules..."
     module purge 2> /dev/null || true
 
-    echo "[MODULES] Loading GCC 11.2.0 (gcc-11.2.0-gcc-8.5.0-ov3qrz6)..."
-    module load gcc-11.2.0-gcc-8.5.0-ov3qrz6
+    echo "[MODULES] Loading GCC..."
+    module load gcc-11.2.0-gcc-8.5.0-ov3qrz6 2>/dev/null || module load gcc/11.2.0 2>/dev/null || module load gcc 2>/dev/null || true
 
-    echo "[MODULES] Loading CUDA 12.1.0 (cuda-12.1.0-gcc-11.2.0-s5o57xp)..."
-    module load cuda-12.1.0-gcc-11.2.0-s5o57xp
+    echo "[MODULES] Loading CUDA..."
+    module load cuda-12.1.0-gcc-11.2.0-s5o57xp 2>/dev/null || module load cuda/12.1 2>/dev/null || module load cuda 2>/dev/null || true
 else
     echo "[WARN] 'module' command not found. Skipping module load."
 fi
@@ -72,6 +77,13 @@ if [ -n "${CONDA_PREFIX}" ]; then
     export PATH="${CONDA_PREFIX}/bin:${PATH}"
 else
     echo "[WARN] CONDA_PREFIX is not set. Ensure cuQuantum and Eigen are in standard paths."
+fi
+
+# 4. Set Cluster-Safe Matplotlib and Python Library Paths
+SCRIPT_PARENT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export MPLCONFIGDIR="/tmp/mpl_${USER:-cluster}"
+if [ -d "${SCRIPT_PARENT}/lib_py" ]; then
+    export PYTHONPATH="${SCRIPT_PARENT}/lib_py:${PYTHONPATH}"
 fi
 
 echo "======================================================================"

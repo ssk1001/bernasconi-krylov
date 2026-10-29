@@ -152,4 +152,39 @@ public:
     SpinState get_canonical(const SpinState& state) const {
         return state.canonical(n);
     }
+
+    /**
+     * @brief Computes d_min: the smallest Hamming distance from s0 to any state with E(s) < target_energy.
+     * Evaluates Hamming spheres d = 1, 2, 3, ... using bit-parallel popcount.
+     * Halts immediately upon finding the first lower-energy state.
+     */
+    int compute_d_min(const SpinState& s0, int64_t target_energy = -1, int max_d = -1) const {
+        if (target_energy < 0) {
+            target_energy = calcEnergy(s0);
+        }
+        uint64_t s_bits = s0.bits & full_mask;
+        int search_limit = (max_d > 0 && max_d <= n) ? max_d : n;
+
+        for (int d = 1; d <= search_limit; ++d) {
+            if (d == n) {
+                SpinState candidate{s_bits ^ full_mask};
+                if (calcEnergy(candidate) < target_energy) return n;
+                break;
+            }
+            uint64_t mask = (1ULL << d) - 1ULL;
+            const uint64_t limit = 1ULL << n;
+
+            while (mask < limit && mask != 0) {
+                SpinState candidate{s_bits ^ mask};
+                if (calcEnergy(candidate) < target_energy) {
+                    return d;
+                }
+                uint64_t c = mask & -mask;
+                uint64_t r = mask + c;
+                if (c == 0) break;
+                mask = (((r ^ mask) >> 2) / c) | r;
+            }
+        }
+        return (max_d > 0) ? (max_d + 1) : n;
+    }
 };

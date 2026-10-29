@@ -19,7 +19,7 @@ cd "${SLURM_SUBMIT_DIR}"
 source scripts/setup_env.sh cuquantum_env
 
 # 2. Ensure directories exist
-mkdir -p data_processed figures/n28
+mkdir -p data_processed figures/n28 seeds
 
 # 3. Run Probability Dynamics for N=28 (10 traps, g in {0.3, 0.35, 0.45}, t in [0, 60])
 echo "--- Running Probability Dynamics (N=28) ---"
@@ -30,5 +30,12 @@ echo "--- Generating Plots and Summary ---"
 python3 scripts/plot_probability_dynamics.py \
     data_processed/probability_dynamics_n28.csv \
     figures/n28
+
+# 5. Compute d_min, rise rates, and update structured JSON
+echo "--- Updating Structured JSON with d_min and Rise Rates ---"
+python3 scripts/compute_d_min.py \
+    --input data_processed/probability_dynamics_n28_results.csv \
+    --seeds seeds/seeds_N28.csv \
+    --output data_processed/structured_benchmark_n28.json
 
 echo "=== Job Completed with status $? at $(date) ==="

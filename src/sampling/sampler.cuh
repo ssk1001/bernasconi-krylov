@@ -145,6 +145,55 @@ static __global__ void sum_p_less_kernel(
     }
 }
 
+/// Parallel reduction kernel to sum |c_s|^2 strictly where E(s) < E_0 and quantum diffusion <dH>
+static __global__ void sum_p_less_and_dh_kernel(
+    const cuDoubleComplex* __restrict__ d_state,
+    const double* __restrict__ d_energies,
+    double seed_energy,
+    uint64_t seed_bits,
+    uint64_t num_states,
+    double* d_out_prob,
+    double* d_out_dh)
+{
+    __shared__ double warp_p[32];
+    __shared__ double warp_dh[32];
+    double thread_p = 0.0;
+    double thread_dh = 0.0;
+    uint64_t idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t stride = (uint64_t)blockDim.x * gridDim.x;
+
+    for (uint64_t i = idx; i < num_states; i += stride) {
+        cuDoubleComplex c = d_state[i];
+        double prob = (c.x * c.x + c.y * c.y);
+        if (d_energies[i] < seed_energy) {
+            thread_p += prob;
+        }
+        int flips = __popcll(i ^ seed_bits);
+        thread_dh += prob * static_cast<double>(flips);
+    }
+
+    double wp = warp_reduce_sum_prob(thread_p);
+    double wdh = warp_reduce_sum_prob(thread_dh);
+    int lane = threadIdx.x % warpSize;
+    int warp_id = threadIdx.x / warpSize;
+    if (lane == 0) {
+        warp_p[warp_id] = wp;
+        warp_dh[warp_id] = wdh;
+    }
+    __syncthreads();
+
+    if (warp_id == 0) {
+        double bp = (lane < (blockDim.x / warpSize)) ? warp_p[lane] : 0.0;
+        double bdh = (lane < (blockDim.x / warpSize)) ? warp_dh[lane] : 0.0;
+        bp = warp_reduce_sum_prob(bp);
+        bdh = warp_reduce_sum_prob(bdh);
+        if (lane == 0) {
+            atomicAdd(d_out_prob, bp);
+            atomicAdd(d_out_dh, bdh);
+        }
+    }
+}
+
 /// Parallel reduction kernel to count states with E(s) < seed_energy for P_blind
 static __global__ void count_improved_states_kernel(
     const double* __restrict__ d_energies,
@@ -218,9 +267,14 @@ struct SamplingResult {
     size_t total_evals = 0;           // Total evaluations taken
     double mean_hamming_flips = 0.0;  // Average Hamming distance of samples from seed
 
-    // 2. Tunneling Probability Dynamics
+    // 2. Tunneling Probability & Diffusion Dynamics
     std::vector<double> time_points;
     std::vector<double> p_less_history; // Instantaneous P_<(t) at each time point
+    std::vector<double> dh_history;     // Instantaneous <dH(t)> trajectory
+    double window_avg_dh = 0.0;         // Delayed window average <dH>
+    double initial_rise_rate_avg = 0.0; // Mean finite difference rate while increasing: P_<(t_peak1) / t_peak1
+    double initial_rise_rate_max = 0.0; // Max instantaneous slope: max delta P_< / delta t
+    int d_min = 0;                      // Barrier Hamming distance to nearest state with E < E_0
     int64_t start_energy = 0;           // E_0 of initial trap
     double p_blind = 0.0;               // Fraction of Hilbert space with E(s) < E_0
     double peak_p_less = 0.0;           // Max P_<(t) observed
@@ -287,6 +341,30 @@ private:
         return h_prob;
     }
 
+    void compute_p_less_and_dh_gpu(
+        const cuDoubleComplex* d_state,
+        uint64_t num_states,
+        double seed_energy,
+        uint64_t seed_bits,
+        double* d_out_prob,
+        double* d_out_dh,
+        double& out_prob,
+        double& out_dh)
+    {
+        CHECK_CUDA(cudaMemset(d_out_prob, 0, sizeof(double)));
+        CHECK_CUDA(cudaMemset(d_out_dh, 0, sizeof(double)));
+        int threads = 256;
+        int blocks = std::min(1024, static_cast<int>((num_states + threads - 1) / threads));
+
+        sum_p_less_and_dh_kernel<<<blocks, threads>>>(
+            d_state, d_cached_energies, seed_energy, seed_bits, num_states, d_out_prob, d_out_dh);
+        CHECK_CUDA(cudaGetLastError());
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+        CHECK_CUDA(cudaMemcpy(&out_prob, d_out_prob, sizeof(double), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(&out_dh, d_out_dh, sizeof(double), cudaMemcpyDeviceToHost));
+    }
+
     double compute_p_blind_gpu(uint64_t num_states, double seed_energy) {
         unsigned long long* d_out_count = nullptr;
         CHECK_CUDA(cudaMalloc(&d_out_count, sizeof(unsigned long long)));
@@ -327,6 +405,7 @@ public:
         SamplingResult result;
         LabsEvaluator eval(config.n);
         result.start_energy = eval.calcEnergy(start_state);
+        result.d_min = eval.compute_d_min(start_state, result.start_energy);
 
         uint64_t num_states = 1ULL << config.n;
         size_t state_bytes = num_states * sizeof(cuDoubleComplex);
@@ -344,8 +423,10 @@ public:
         CHECK_CUDA(cudaMemcpy(d_state + start_idx, &one, sizeof(cuDoubleComplex), cudaMemcpyHostToDevice));
 
         double* d_out_prob = nullptr;
+        double* d_out_dh = nullptr;
         if (config.track_p_less || config.record_trajectory) {
             CHECK_CUDA(cudaMalloc(&d_out_prob, sizeof(double)));
+            CHECK_CUDA(cudaMalloc(&d_out_dh, sizeof(double)));
         }
 
         // 2. Initialize cuStateVec handle and precompute single-qubit Rx gate matrix
@@ -404,10 +485,14 @@ public:
             // Continuous trajectory recording
             if (config.record_trajectory) {
                 if (current_t >= next_traj_time - 1e-9 && next_traj_time <= config.t_max + 1e-9) {
-                    double p_less_val = compute_p_less_gpu(
-                        d_state, num_states, static_cast<double>(result.start_energy), d_out_prob);
+                    double p_less_val = 0.0;
+                    double dh_val = 0.0;
+                    compute_p_less_and_dh_gpu(
+                        d_state, num_states, static_cast<double>(result.start_energy),
+                        start_idx, d_out_prob, d_out_dh, p_less_val, dh_val);
                     result.time_points.push_back(current_t);
                     result.p_less_history.push_back(p_less_val);
+                    result.dh_history.push_back(dh_val);
                     if (p_less_val > result.peak_p_less) {
                         result.peak_p_less = p_less_val;
                         result.peak_time = current_t;
@@ -421,6 +506,7 @@ public:
                                   << std::setw(4) << step << "/" << total_trotter_steps
                                   << " (t = " << std::fixed << std::setprecision(1) << current_t << "s)"
                                   << " | P_<(t) = " << std::scientific << std::setprecision(3) << p_less_val
+                                  << " | <dH> = " << std::fixed << std::setprecision(2) << dh_val
                                   << " | Peak = " << result.peak_p_less << " (at t=" << std::fixed << std::setprecision(1) << result.peak_time << "s)"
                                   << std::defaultfloat << std::endl;
                     }
@@ -428,10 +514,14 @@ public:
             } else if (config.track_p_less) {
                 // Coarse delayed-window measurement points
                 if (current_t >= next_sample_time - 1e-9 && next_sample_time <= config.t_max + 1e-9) {
-                    double p_less_val = compute_p_less_gpu(
-                        d_state, num_states, static_cast<double>(result.start_energy), d_out_prob);
+                    double p_less_val = 0.0;
+                    double dh_val = 0.0;
+                    compute_p_less_and_dh_gpu(
+                        d_state, num_states, static_cast<double>(result.start_energy),
+                        start_idx, d_out_prob, d_out_dh, p_less_val, dh_val);
                     result.time_points.push_back(current_t);
                     result.p_less_history.push_back(p_less_val);
+                    result.dh_history.push_back(dh_val);
                     if (p_less_val > result.peak_p_less) {
                         result.peak_p_less = p_less_val;
                         result.peak_time = current_t;
@@ -485,7 +575,7 @@ public:
             }
         }
 
-        // 5. Package results
+        // 5. Package results & compute derived metrics
         result.unique_basis.assign(unique_set.begin(), unique_set.end());
         result.total_evals = result.total_shots_collected;
         if (result.total_shots_collected > 0) {
@@ -496,12 +586,52 @@ public:
                 : 0.0;
         }
 
+        // Compute initial rise rates:
+        // average finite difference slope while monotonically increasing: P_<(t_peak1) / t_peak1
+        // and max instantaneous slope
+        if (result.p_less_history.size() >= 2) {
+            size_t first_drop = result.p_less_history.size() - 1;
+            for (size_t i = 1; i < result.p_less_history.size(); ++i) {
+                if (result.p_less_history[i] < result.p_less_history[i - 1]) {
+                    first_drop = i - 1;
+                    break;
+                }
+            }
+            double t_p1 = result.time_points[first_drop];
+            double p_p1 = result.p_less_history[first_drop];
+            result.initial_rise_rate_avg = (t_p1 > 0.0) ? (p_p1 / t_p1) : 0.0;
+
+            double max_slope = 0.0;
+            for (size_t i = 0; i < first_drop; ++i) {
+                double dt_step = result.time_points[i + 1] - result.time_points[i];
+                if (dt_step > 1e-9) {
+                    double slope = (result.p_less_history[i + 1] - result.p_less_history[i]) / dt_step;
+                    if (slope > max_slope) max_slope = slope;
+                }
+            }
+            result.initial_rise_rate_max = max_slope;
+        }
+
+        // Window-averaged <dH>
+        double avg_start = config.record_trajectory ? 0.0 : config.t_start;
+        double sum_dh = 0.0;
+        size_t count_dh = 0;
+        for (size_t i = 0; i < result.time_points.size() && i < result.dh_history.size(); ++i) {
+            if (result.time_points[i] >= avg_start - 1e-9) {
+                sum_dh += result.dh_history[i];
+                count_dh++;
+            }
+        }
+        result.window_avg_dh = (count_dh > 0) ? (sum_dh / count_dh) : (result.dh_history.empty() ? 0.0 : result.dh_history.back());
+
         // 6. Log successes/trials
         if (config.verbose) {
             std::cout << "[Quantum Sampler] Successes / Trials: " 
                       << result.improved_shots << " / " << result.total_shots_collected 
                       << " (" << std::fixed << std::setprecision(2) << (result.success_rate * 100.0) << "%)"
                       << " | E < E_og (E_og = " << result.start_energy << ")"
+                      << " | Window <dH>: " << std::fixed << std::setprecision(2) << result.window_avg_dh
+                      << " | Rise Rate (avg): " << std::scientific << std::setprecision(3) << result.initial_rise_rate_avg
                       << " | Evals: " << result.total_evals
                       << " | Per-Eval Rate: " << std::scientific << std::setprecision(4) << result.per_eval_rate
                       << std::defaultfloat << "\n";
@@ -511,6 +641,7 @@ public:
         custatevecSamplerDestroy(sampler_desc);
         if (d_workspace) cudaFree(d_workspace);
         if (d_out_prob) cudaFree(d_out_prob);
+        if (d_out_dh) cudaFree(d_out_dh);
         custatevecDestroy(handle);
         cudaFree(d_state);
 

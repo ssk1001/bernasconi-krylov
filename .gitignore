@@ -39,6 +39,7 @@ __pycache__/
 .venv/
 venv/
 env/
+lib_py/
 
 # IDE and OS files
 .vscode/*

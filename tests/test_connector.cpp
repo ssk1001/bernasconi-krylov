@@ -75,10 +75,16 @@ int main() {
     std::string res_csv = cfg.output.get_results_path(6);
     std::string dyn_csv = cfg.output.get_time_series_path(6);
     std::string sum_csv = cfg.output.get_summary_path();
+    std::string json_file = cfg.output.get_structured_json_path(6);
+    std::string all_json_file = cfg.output.get_all_structured_json_path();
 
     assert(std::filesystem::exists(res_csv));
     assert(std::filesystem::exists(dyn_csv));
     assert(std::filesystem::exists(sum_csv));
+    assert(std::filesystem::exists(json_file));
+    assert(std::filesystem::exists(all_json_file));
+    assert(std::filesystem::file_size(json_file) > 50);
+    assert(std::filesystem::file_size(all_json_file) > 50);
 
     // Verify CSV line count
     std::ifstream f_res(res_csv);
@@ -87,7 +93,7 @@ int main() {
     while (std::getline(f_res, line)) res_lines++;
     assert(res_lines == 3); // Header + 2 trap rows
 
-    std::cout << "  --> PASSED: Output CSV exports verified!\n";
+    std::cout << "  --> PASSED: Output CSV and structured JSON exports verified!\n";
 
     // 4. Test Table Print
     std::cout << "[Test 4] Verifying summary table format...\n";
@@ -255,10 +261,10 @@ int main() {
     std::cout << "  --> Successfully hit cache and reloaded identical seeds!\n";
 
     // Subtest 8.3: Directory search fallback test (discovers data_raw/minima/minima_n16.csv)
-    std::string found_n16 = BenchmarkConnector::find_seed_file("seeds", 16);
-    assert(!found_n16.empty());
-    assert(found_n16.find("minima_n16.csv") != std::string::npos);
-    std::cout << "  --> Fallback path resolver found: " << found_n16 << "\n";
+    std::string found_minima_n16 = BenchmarkConnector::find_seed_file("data_raw/minima", 16);
+    assert(!found_minima_n16.empty());
+    assert(found_minima_n16.find("minima_n16.csv") != std::string::npos);
+    std::cout << "  --> Fallback path resolver found: " << found_minima_n16 << "\n";
 
     // Clean up temporary test files
     std::filesystem::remove_all("data_raw/test_cache");

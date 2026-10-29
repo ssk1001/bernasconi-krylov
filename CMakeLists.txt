@@ -86,6 +86,17 @@ if(EXISTS "/usr/local/cuda/lib64")
 endif()
 
 # ==============================================================================
+# Standalone CLI Utilities
+# ==============================================================================
+add_executable(compute_d_min_cli 
+    src/tools/compute_d_min_cli.cpp
+)
+target_include_directories(compute_d_min_cli PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/labs_energy
+)
+
+# ==============================================================================
 # Deprecated Legacy Executables (Disabled by default)
 # ==============================================================================
 option(BUILD_LEGACY_TARGETS "Build deprecated legacy executables (fixed_g_custatevec, probability_dynamics)" OFF)

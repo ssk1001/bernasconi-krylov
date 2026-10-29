@@ -171,6 +171,8 @@ struct OutputConfig {
     std::string results_csv = "benchmark_results_n{N}.csv";
     std::string time_series_csv = "p_less_dynamics_n{N}.csv";
     std::string summary_csv = "benchmark_summary.csv";
+    std::string structured_json = "structured_benchmark_n{N}.json";
+    std::string all_structured_json = "all_seeds_benchmark.json";
     bool verbose = true;
 
     // Helper: Substitute {N} or {n} and join with output_dir
@@ -200,6 +202,14 @@ struct OutputConfig {
 
     std::string get_summary_path() const {
         return resolve_path(summary_csv, 0);
+    }
+
+    std::string get_structured_json_path(int n) const {
+        return resolve_path(structured_json, n);
+    }
+
+    std::string get_all_structured_json_path() const {
+        return resolve_path(all_structured_json, 0);
     }
 };
 
@@ -333,11 +343,10 @@ struct BenchmarkConfig {
             output.output_dir = val;
         } else if (key == "results_csv" || key == "csv_results" || key == "csv_output") {
             output.results_csv = val;
-            if (quantum.record_trajectory || output.time_series_csv == "p_less_dynamics_n{N}.csv") {
-                output.time_series_csv = val;
-            }
         } else if (key == "time_series_csv" || key == "csv_time_series" || key == "csv_trajectory") {
             output.time_series_csv = val;
+        } else if (key == "structured_json" || key == "json_output" || key == "structured_output" || key == "json_benchmark") {
+            output.structured_json = val;
         } else if (key == "summary_csv" || key == "csv_summary") {
             output.summary_csv = val;
         } else if (key == "verbose") {
