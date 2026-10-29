@@ -4,7 +4,7 @@
 # Sources environment and compiles fixed_g_custatevec & probability_dynamics
 #
 # Usage:
-#   bash scripts/build.sh [conda_env_name]   (default conda env: qsim)
+#   bash scripts/build.sh [conda_env_name]   (default conda env: cuquantum_env)
 # ==============================================================================
 set -e
 
@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Source environment
-source "${SCRIPT_DIR}/setup_env.sh" "$@"
+source "${SCRIPT_DIR}/setup_env.sh" "${1:-cuquantum_env}"
 
 cd "${ROOT_DIR}"
 

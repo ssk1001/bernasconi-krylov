@@ -137,7 +137,7 @@ int main() {
         std::cout << "  --> PASSED: Overview grid and individual plots successfully generated!\n";
     } else {
         std::cout << "  [Notice] Python pandas/matplotlib not present in local python environment.\n"
-                  << "  (They are activated via 'source scripts/setup_env.sh qsim' on the HPC cluster).\n"
+                  << "  (They are activated via 'source scripts/setup_env.sh cuquantum_env' on the HPC cluster).\n"
                   << "  --> SKIPPED rendering test (CSV validation passed!).\n";
     }
 

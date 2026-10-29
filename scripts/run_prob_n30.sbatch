@@ -16,7 +16,7 @@ nvidia-smi
 cd "${SLURM_SUBMIT_DIR}"
 
 # 1. Environment setup (Spack modules + Conda)
-source scripts/setup_env.sh qsim
+source scripts/setup_env.sh cuquantum_env
 
 # 2. Ensure directories exist
 mkdir -p data_processed figures/n30

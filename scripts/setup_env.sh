@@ -4,10 +4,10 @@
 # Loads Spack GCC 11.2.0 + CUDA 12.1.0 modules and connects Conda cuQuantum/Eigen
 #
 # Usage:
-#   source scripts/setup_env.sh [conda_env_name]   (default conda env: qsim)
+#   source scripts/setup_env.sh [conda_env_name]   (default conda env: cuquantum_env)
 # ==============================================================================
 
-ENV_NAME="${1:-qsim}"
+ENV_NAME="${1:-cuquantum_env}"
 
 echo "======================================================================"
 echo "          Setting up Bernasconi-Krylov HPC Environment"
@@ -48,6 +48,8 @@ if [ -n "${CONDA_PROFILE}" ]; then
 elif command -v conda &> /dev/null; then
     eval "$(conda shell.bash hook 2> /dev/null || true)"
 fi
+
+ENV_NAME="${1:-cuquantum_env}"
 
 if [ "${CONDA_DEFAULT_ENV}" = "${ENV_NAME}" ]; then
     echo "[CONDA] Already active in requested environment: '${ENV_NAME}'"
