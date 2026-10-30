@@ -347,6 +347,8 @@ struct BenchmarkConfig {
             output.time_series_csv = val;
         } else if (key == "structured_json" || key == "json_output" || key == "structured_output" || key == "json_benchmark") {
             output.structured_json = val;
+        } else if (key == "all_structured_json" || key == "all_json_output" || key == "overall_json") {
+            output.all_structured_json = val;
         } else if (key == "summary_csv" || key == "csv_summary") {
             output.summary_csv = val;
         } else if (key == "verbose") {
