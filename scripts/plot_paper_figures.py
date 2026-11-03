@@ -68,8 +68,12 @@ def bootstrap_median_ci(data: list, num_resamples: int = 2000, ci_level: float =
     ci_high = float(np.percentile(boot_medians, 100.0 * (1.0 - alpha)))
     return med, ci_low, ci_high
 
-def load_all_structured_data(data_dir: str):
-    """Loads all structured benchmark JSON files from data_dir."""
+def get_known_optimum(n_spins):
+    opt_map = {16: 24, 20: 26, 22: 39, 24: 36, 26: 45, 28: 50, 30: 59}
+    return opt_map.get(n_spins, None)
+
+def load_all_structured_data(data_dir: str, min_n: int = 20):
+    """Loads all structured benchmark JSON files from data_dir, excluding global optimum states and N < min_n."""
     files = sorted(glob.glob(os.path.join(data_dir, "structured_benchmark_n*.json")))
     if not files:
         # Check parent data directory
@@ -85,17 +89,22 @@ def load_all_structured_data(data_dir: str):
         with open(f, "r") as fp:
             d = json.load(fp)
             n = d.get("system", {}).get("N")
-            if n:
+            if n and n >= min_n:
+                # Exclude seeds that are the exact global ground state (no escape states exist)
+                opt_e = get_known_optimum(n)
+                if opt_e is not None and "seeds" in d:
+                    d["seeds"] = [s for s in d["seeds"] if s.get("trap_energy_E0", 999999) > opt_e]
+                    d["system"]["num_seeds"] = len(d["seeds"])
                 datasets[n] = d
     return datasets
 
 # =============================================================================
-# FIGURE (a): Ratio R = window P_< / r*(d*) vs N for Hardest Two Levels
+# FIGURE (a): Ratio R = window P_< / r_classical* vs N for Hardest Two Levels
 # =============================================================================
-def generate_figure_a(datasets: dict, output_dir: str, num_resamples: int = 2000):
+def generate_figure_a(datasets: dict, output_dir: str, num_resamples: int = 2000, target_g: float = 0.35):
     """
-    Figure (a): R = window P_< / best_d_rate vs N for Level 1 (deepest) and Level 2.
-    Plots median and B=2000 bootstrap error bars.
+    Figure (a): R = window P_< / max(best_d_rate, restart_rate) vs N for Level 1 (deepest) and Level 2.
+    Plots median and B=2000 bootstrap error bars at field g.
     """
     fig, ax = plt.subplots(figsize=(7.5, 5.2), dpi=300)
 
@@ -105,8 +114,8 @@ def generate_figure_a(datasets: dict, output_dir: str, num_resamples: int = 2000
         "Level_2": {"N": [], "median": [], "ci_low": [], "ci_high": [], "error_low": [], "error_high": [], "raw_ratios": []}
     }
 
-    # Evaluate at g = 0.35 (standard mid-coupling)
-    target_g_key = "0.35"
+    # Evaluate at specified target g (default: 0.30)
+    g_keys = [f"{target_g:.2f}", f"{target_g:.1f}", str(target_g)]
 
     for n in n_values:
         data = datasets[n]
@@ -129,10 +138,18 @@ def generate_figure_a(datasets: dict, output_dir: str, num_resamples: int = 2000
             lvl_seeds = energy_groups[e_val]
             ratios = []
             for s in lvl_seeds:
-                c_rate = s["classical_baselines"].get("best_d_rate", 0.0)
+                cb = s.get("classical_baselines", {})
+                c_rate = max(cb.get("best_d_rate", 0.0), cb.get("restart_rate", 0.0))
                 # Find quantum window P_<
                 q_dyn = s.get("quantum_dynamics", {})
-                q_run = q_dyn.get(target_g_key) or list(q_dyn.values())[0] if q_dyn else None
+                q_run = None
+                for gk in g_keys:
+                    if gk in q_dyn:
+                        q_run = q_dyn[gk]
+                        break
+                if not q_run and q_dyn:
+                    q_run = list(q_dyn.values())[0]
+
                 if q_run and c_rate > 0:
                     win_p = q_run.get("window_avg_p_less", 0.0)
                     r = win_p / c_rate
@@ -176,8 +193,8 @@ def generate_figure_a(datasets: dict, output_dir: str, num_resamples: int = 2000
 
     ax.set_yscale("log")
     ax.set_xlabel("System Size $N$")
-    ax.set_ylabel(r"Quantum-to-Classical Ratio $R = \langle P_< \rangle / r^*(d^*)$")
-    ax.set_title(r"$\mathbf{(a)}$ Ratio $R$ vs $N$ for Hardest Two Minima Levels ($g = 0.35$)", pad=10)
+    ax.set_ylabel(r"Quantum Advantage Ratio $R = \langle P_< \rangle / r_{\mathrm{classical}}^*$")
+    ax.set_title(rf"$\mathbf{{(a)}}$ Ratio $R$ vs $N$ for Hardest Two Minima Levels ($g = {target_g:.2f}$)", pad=10)
     ax.set_xticks(n_values)
     ax.grid(True, which="both", linestyle="--", alpha=0.3)
     ax.legend(frameon=True, loc="upper right")
@@ -202,7 +219,7 @@ def generate_figure_b(datasets: dict, output_dir: str):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5.0), dpi=300)
 
     fig_data = {"seeds": []}
-    color_map = {16: "#1f77b4", 20: "#2ca02c", 24: "#ff7f0e", 26: "#9467bd", 28: "#d62728", 30: "#8c564b"}
+    color_map = {20: "#2ca02c", 24: "#ff7f0e", 26: "#9467bd", 28: "#d62728", 30: "#8c564b"}
     marker_map = {0.30: "^", 0.35: "o", 0.45: "s"}
 
     for n, data in sorted(datasets.items()):
@@ -353,7 +370,7 @@ def generate_figure_d(datasets: dict, output_dir: str):
     """
     fig, ax = plt.subplots(figsize=(8.5, 5.2), dpi=300)
 
-    color_map = {16: "#1f77b4", 20: "#2ca02c", 24: "#ff7f0e", 26: "#9467bd", 28: "#d62728", 30: "#8c564b"}
+    color_map = {20: "#2ca02c", 24: "#ff7f0e", 26: "#9467bd", 28: "#d62728", 30: "#8c564b"}
     target_g_key = "0.35"
     fig_data = {"curves": {}}
 
@@ -420,16 +437,18 @@ def main():
     parser.add_argument("--data-dir", default="data_processed", help="Path to directory containing structured benchmark JSON files")
     parser.add_argument("--output-dir", default="figures/paper", help="Output directory for generated figures (.png and .pdf)")
     parser.add_argument("--bootstrap-samples", type=int, default=2000, help="Number of bootstrap resamples (default: 2000)")
+    parser.add_argument("--g-ratio", type=float, default=0.35, help="Transverse field coupling g for Figure (a) ratio plot (default: 0.35)")
+    parser.add_argument("--min-n", type=int, default=20, help="Minimum system size N to include (default: 20)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    print(f"[plot_paper_figures] Loading persistent datasets from: {args.data_dir}")
-    datasets = load_all_structured_data(args.data_dir)
+    print(f"[plot_paper_figures] Loading persistent datasets from: {args.data_dir} (min_n = {args.min_n})")
+    datasets = load_all_structured_data(args.data_dir, min_n=args.min_n)
     print(f"[plot_paper_figures] Loaded system sizes: N = {sorted(datasets.keys())}")
 
     # Generate all four figures
     summary = {}
-    summary["fig_a_ratio_vs_N"] = generate_figure_a(datasets, args.output_dir, num_resamples=args.bootstrap_samples)
+    summary["fig_a_ratio_vs_N"] = generate_figure_a(datasets, args.output_dir, num_resamples=args.bootstrap_samples, target_g=args.g_ratio)
     summary["fig_b_rise_rate_and_pless_vs_dmin"] = generate_figure_b(datasets, args.output_dir)
     summary["fig_c_pless_and_dh_vs_g"] = generate_figure_c(datasets, args.output_dir)
     summary["fig_d_hardest_seed_dynamics"] = generate_figure_d(datasets, args.output_dir)

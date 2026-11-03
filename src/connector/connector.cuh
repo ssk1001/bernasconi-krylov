@@ -224,10 +224,26 @@ public:
             }
         }
 
-        // Sort ascending by energy (deepest traps first)
+        // Filter out global optima (E_0 <= E*(N)) so only true metastable traps (E_0 > E*(N)) are benchmarked
+        int64_t opt_energy = LabsEvaluator::known_optimal_energy(n);
+        if (opt_energy >= 0) {
+            size_t suboptimal_count = std::count_if(
+                families.begin(), families.end(),
+                [opt_energy](const MinimumFamily& f) { return f.energy > opt_energy; }
+            );
+            if (suboptimal_count >= traps_cfg.benchmark_trap_count) {
+                families.erase(
+                    std::remove_if(families.begin(), families.end(),
+                                   [opt_energy](const MinimumFamily& f) { return f.energy <= opt_energy; }),
+                    families.end()
+                );
+            }
+        }
+
+        // Sort ascending by energy (deepest traps first), tie-breaking deterministically by canonical state
         std::sort(families.begin(), families.end(), [](const MinimumFamily& a, const MinimumFamily& b) {
             if (a.energy != b.energy) return a.energy < b.energy;
-            return a.times_visited > b.times_visited;
+            return a.canonical_state.bits < b.canonical_state.bits;
         });
 
         size_t take_count = std::min(traps_cfg.benchmark_trap_count, families.size());
@@ -349,7 +365,7 @@ public:
             int64_t dim = 1LL << n;
             d_cfg.method = DiagMethod::ExactDense;
             d_cfg.num_eigenpairs = static_cast<int>(dim);
-            d_cfg.normalize_by_n = false;
+            d_cfg.normalize_by_n = true;
 
             Eigensolution sol = diag.solve_fullspace_dense(n, g, d_cfg);
             LabsEvaluator eval(n);
@@ -414,8 +430,8 @@ public:
 
             // Compute initial rise rates:
             // average finite difference slope while monotonically increasing: P_<(t_peak1) / t_peak1
-            // and max instantaneous slope
-            if (bench.p_less_history.size() >= 2) {
+            // and max instantaneous slope (including the initial rise from t=0, P_<(0)=0 if t_0 > 0)
+            if (!bench.p_less_history.empty()) {
                 size_t first_drop = bench.p_less_history.size() - 1;
                 for (size_t i = 1; i < bench.p_less_history.size(); ++i) {
                     if (bench.p_less_history[i] < bench.p_less_history[i - 1]) {
@@ -427,7 +443,9 @@ public:
                 double p_p1 = bench.p_less_history[first_drop];
                 bench.initial_rise_rate_avg = (t_p1 > 0.0) ? (p_p1 / t_p1) : 0.0;
 
-                double max_slope = 0.0;
+                double max_slope = (bench.time_points[0] > 1e-9)
+                    ? (bench.p_less_history[0] / bench.time_points[0])
+                    : 0.0;
                 for (size_t i = 0; i < first_drop; ++i) {
                     double dt_step = bench.time_points[i + 1] - bench.time_points[i];
                     if (dt_step > 1e-9) {
@@ -438,12 +456,15 @@ public:
                 bench.initial_rise_rate_max = max_slope;
             }
 
-            // Window avg dH
-            double avg_start = q_cfg.record_trajectory ? 0.0 : q_cfg.t_start;
+            // Window avg dH over [t_start, avg_end]
+            double avg_start = q_cfg.t_start;
+            double avg_end = (q_cfg.k_sample_points > 1 && q_cfg.dt_sample > 0.0)
+                ? (q_cfg.t_start + (q_cfg.k_sample_points - 1) * q_cfg.dt_sample)
+                : q_cfg.t_max();
             double sum_dh = 0.0;
             size_t count_dh = 0;
             for (size_t i = 0; i < bench.time_points.size() && i < bench.dh_history.size(); ++i) {
-                if (bench.time_points[i] >= avg_start - 1e-9) {
+                if (bench.time_points[i] >= avg_start - 1e-9 && bench.time_points[i] <= avg_end + 1e-9) {
                     sum_dh += bench.dh_history[i];
                     count_dh++;
                 }
@@ -460,12 +481,15 @@ public:
         }
 #endif
 
-        // Exact window-averaged P_<: mean over t in [t_start, t_max] (or [0, t_max] if record_trajectory)
-        double avg_start = q_cfg.record_trajectory ? 0.0 : q_cfg.t_start;
+        // Exact window-averaged P_<: mean over t in [t_start, avg_end]
+        double avg_start = q_cfg.t_start;
+        double avg_end = (q_cfg.k_sample_points > 1 && q_cfg.dt_sample > 0.0)
+            ? (q_cfg.t_start + (q_cfg.k_sample_points - 1) * q_cfg.dt_sample)
+            : q_cfg.t_max();
         double sum_p = 0.0;
         size_t count = 0;
         for (size_t i = 0; i < bench.time_points.size(); ++i) {
-            if (bench.time_points[i] >= avg_start - 1e-9) {
+            if (bench.time_points[i] >= avg_start - 1e-9 && bench.time_points[i] <= avg_end + 1e-9) {
                 sum_p += bench.p_less_history[i];
                 count++;
             }

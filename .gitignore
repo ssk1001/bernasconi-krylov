@@ -49,12 +49,12 @@ lib_py/
 *~
 .DS_Store
 
-# Generated benchmark results & summaries (root level and subdirectories)
-*_results.csv
-*_summary.csv
-*_summary_statistics.csv
-*benchmark_results.csv
-*summary_statistics.csv
+# Generated benchmark results & summaries (root level)
+/*_results.csv
+/*_summary.csv
+/*_summary_statistics.csv
+/*benchmark_results.csv
+/*summary_statistics.csv
 
 # Generated benchmark markdown reports (both lowercase and uppercase extensions)
 *_REPORT.md
@@ -64,9 +64,14 @@ lib_py/
 SKQD_BENCHMARK_REPORT.md
 SKQD_BENCHMARK_REPORT.MD
 
-# Generated outputs & figures
-data_processed/**/*.csv
-data_processed/*.csv
+# Track all processed benchmark data (except Tabu search benchmarks)
+!data_processed/**
+
+# Tabu search datasets and related files
+*tabu*
+*tabu*/**
+
+# Generated figures
 figures/*.png
 figures/*.pdf
 figures/*.svg
@@ -80,4 +85,16 @@ core.*
 
 # Cached steepest descent seeds
 seeds/
+
+# LaTeX build artifacts
+*.aux
+*.toc
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# Local scratch directory
+scratch/
 

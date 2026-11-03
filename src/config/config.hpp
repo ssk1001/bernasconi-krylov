@@ -321,6 +321,8 @@ struct BenchmarkConfig {
             quantum.t_max_val = std::stod(val);
         } else if (key == "run_classical" || key == "enable_classical") {
             quantum.run_classical = config_detail::parse_bool(val);
+        } else if (key == "compute_transverse" || key == "eval_transverse") {
+            // Recognized parameter: evaluate transverse field alone H_X
         }
 
         // 4. Classical section

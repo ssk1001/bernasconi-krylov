@@ -40,7 +40,7 @@ struct SpinState {
     static inline uint64_t reverse_bits(uint64_t x, int n) {
         x = ((x >> 1) & 0x5555555555555555ULL) | ((x & 0x5555555555555555ULL) << 1);
         x = ((x >> 2) & 0x3333333333333333ULL) | ((x & 0x3333333333333333ULL) << 2);
-        x = ((x >> 4) & 0x0F0F0F0F0F0F0F0FULL) | ((x & 0x0F0F0F0F0F0F0FULL) << 4);
+        x = ((x >> 4) & 0x0F0F0F0F0F0F0F0FULL) | ((x & 0x0F0F0F0F0F0F0F0FULL) << 4);
         x = ((x >> 8) & 0x00FF00FF00FF00FFULL) | ((x & 0x00FF00FF00FF00FFULL) << 8);
         x = ((x >> 16) & 0x0000FFFF0000FFFFULL) | ((x & 0x0000FFFF0000FFFFULL) << 16);
         x = (x >> 32) | (x << 32);
@@ -153,6 +153,20 @@ public:
         return state.canonical(n);
     }
 
+    static int64_t known_optimal_energy(int sys_n) {
+        switch (sys_n) {
+            case 3:  return 1;   case 4:  return 2;   case 5:  return 2;   case 6:  return 7;
+            case 7:  return 3;   case 8:  return 8;   case 9:  return 12;  case 10: return 13;
+            case 11: return 5;   case 12: return 10;  case 13: return 6;   case 14: return 19;
+            case 15: return 15;  case 16: return 24;  case 17: return 32;  case 18: return 25;
+            case 19: return 29;  case 20: return 26;  case 21: return 26;  case 22: return 39;
+            case 23: return 47;  case 24: return 36;  case 25: return 36;  case 26: return 45;
+            case 27: return 37;  case 28: return 50;  case 29: return 62;  case 30: return 59;
+            case 31: return 67;  case 32: return 64;
+            default: return -1;
+        }
+    }
+
     /**
      * @brief Computes d_min: the smallest Hamming distance from s0 to any state with E(s) < target_energy.
      * Evaluates Hamming spheres d = 1, 2, 3, ... using bit-parallel popcount.
@@ -161,6 +175,10 @@ public:
     int compute_d_min(const SpinState& s0, int64_t target_energy = -1, int max_d = -1) const {
         if (target_energy < 0) {
             target_energy = calcEnergy(s0);
+        }
+        int64_t opt_e = known_optimal_energy(n);
+        if (opt_e >= 0 && target_energy <= opt_e) {
+            return (max_d > 0) ? (max_d + 1) : n;
         }
         uint64_t s_bits = s0.bits & full_mask;
         int search_limit = (max_d > 0 && max_d <= n) ? max_d : n;

@@ -84,10 +84,9 @@ int main(){
             }
             newdoc.Save();
         }else{
-            Document newdoc("", LabelParams(-1, -1));
-            newdoc.InsertColumn(newdoc.GetColumnCount(), vector<string>({"Mask"}));
-            newdoc.InsertColumn(newdoc.GetColumnCount(), vector<string>({"Energy"}));
             newdoc.InsertColumn(newdoc.GetColumnCount(), vector<string>({"N"}));
+            newdoc.InsertColumn(newdoc.GetColumnCount(), vector<string>({"Energy"}));
+            newdoc.InsertColumn(newdoc.GetColumnCount(), vector<string>({"Mask"}));
             // newdoc.InsertColumn(newdoc.GetColumnCount(), {}, "energy");
             // newdoc.InsertColumn(newdoc.GetColumnCount(), {}, "mask");
             newdoc.InsertRow(newdoc.GetRowCount(), vector<long long>({n, energies[mask], mask}));

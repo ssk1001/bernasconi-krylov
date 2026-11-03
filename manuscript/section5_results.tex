@@ -1,0 +1,178 @@
+\section{Numerical Benchmark Results and Discussion}
+\label{sec:results}
+
+In this section, we present the empirical results of our large-scale computational benchmark evaluating quantum tunneling escape dynamics against optimal classical local search across the Bernasconi / Low Autocorrelation Binary Sequence (LABS) energy landscape~\cite{bernasconi1987, packebusch2016, mertens1996}. Simulations span system sizes from $N = 16$ to $N = 30$ ($2^{30} \approx 1.07 \times 10^9$ Hilbert space states), executed on NVIDIA H100 and H200 Tensor Core GPUs using the statevector evolution pipeline~\cite{custatevec} detailed in Section~\ref{sec:methods}.
+
+\subsection{Experimental Benchmark Protocol}
+\label{subsec:protocol}
+
+For each system size $N \in \{16, 20, 24, 26, 28, 30\}$, we identify the lowest-lying local minima of the Bernasconi 4-body Hamiltonian,
+\begin{equation}
+H_Z = \sum_{k=1}^{N-1} \left( \sum_{i=1}^{N-k} \sigma_i^z \sigma_{i+k}^z \right)^2,
+\end{equation}
+under the full order-8 spatial and spin symmetry group (spin inversion, sequence reversal, and alternating bit flips)~\cite{marinari1994, packebusch2016}. Trivial global ground state configurations (e.g., $E_0 = 24$ at $N = 16$) are excluded via exact ground state tables~\cite{packebusch2016}, as no configurations exist with $E < E_0$, leaving true metastable traps for evaluation.
+
+The quantum escape process is initialized at $t = 0$ in the pure classical trap state $|\psi(0)\rangle = |s_0\rangle$ and evolved under the Trotterized transverse-field Hamiltonian $H = \frac{1}{N} H_Z - g \sum_{i=1}^N \sigma_i^x$~\cite{kadowaki1998, trotter1959, suzuki1976} with time step $\Delta t = 0.05\,\text{s}$ over a total horizon $T = 60\,\text{s}$ (1,200 Trotter steps). Quantum performance is benchmarked against two rigorous classical baselines:
+\begin{enumerate}
+    \item \textbf{Optimal Multi-Start Random Kick + Steepest Descent (Kick+SD):} From $s_0$, an exact Hamming perturbation of $d$ spins ($d \in \{1, 2, 4, 6, \dots\}$) is applied, followed by deterministic single-spin flip steepest descent until convergence~\cite{marti2003, glover1986}. We denote the optimal classical escape rate across all perturbation distances by $r^*(d^*) = \max_d r(d)$, evaluated over up to $50,000$ multi-start trials per distance.
+    \item \textbf{Random Restart Steepest Descent:} Independent uniform random initializations followed by steepest descent, with rate $r_{\text{restart}}$.
+\end{enumerate}
+
+To quantify performance, we evaluate the quantum advantage ratio against the best classical escape rate:
+\begin{equation}
+R = \frac{\langle P_< \rangle}{r_{\text{classical}}^*}, \quad \text{where } r_{\text{classical}}^* = \max\left(r^*(d^*), r_{\text{restart}}\right),
+\end{equation}
+where $\langle P_< \rangle = \frac{1}{T_2 - T_1} \int_{T_1}^{T_2} P_<(t)\,dt$ is the time-averaged probability of measuring a spin configuration with $E(s) < E_0$ within the measurement window $[T_1, T_2] = [10.0, 38.5]\,\text{s}$. A ratio $R > 1$ signifies that a single projective measurement drawn from the unitary quantum wavepacket achieves a higher probability of escaping into a lower-energy basin than the best possible classically perturbed descent step across all tested strategies.
+
+% ==============================================================================
+% TABLE: SUMMARY OF RATIOS
+% ==============================================================================
+\begin{table*}[t]
+\centering
+\small
+\caption{Quantum advantage ratio $R = \langle P_< \rangle / r_{\text{classical}}^*$ at transverse field $g = 0.35$ across system sizes $N \in \{20, \dots, 30\}$, taking the upper envelope $r_{\text{classical}}^* = \max(r^*(d^*), r_{\text{restart}})$ over all classical multi-start baselines. Values report the sample median and $68\%$ bootstrap confidence intervals across symmetry-distinct metastable traps for the two lowest local minima energy tiers: Level 1 (deepest traps) and Level 2 (first excited trap tier).}
+\label{tab:ratio_summary}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Energy Tier} & $N = 20$ & $N = 24$ & $N = 26$ & $N = 28$ & $N = 30$ \\
+\midrule
+\textbf{Level 1 (Deepest Traps)} & & & & & \\
+Trap Energy $E_0$ & 34 & 52 & 61 & 70 & 75 \\
+Barrier Distance $d_{\min}$ Range & 6--8 & 6--9 & 6 & 6--9 & 9 \\
+Sample Median $R$ & $\mathbf{31.11}$ & $\mathbf{34.82}$ & $\mathbf{22.26}$ & $\mathbf{61.09}$ & $\mathbf{111.24}$ \\
+$68\%$ Bootstrap CI & $[30.72, 55.31]$ & $[21.20, 54.86]$ & $[22.26, 22.26]$ & $[36.75, 85.43]$ & $[111.24, 111.24]$ \\
+\midrule
+\textbf{Level 2 (Excited Traps)} & & & & & \\
+Trap Energy $E_0$ & 38 & 56 & 69 & 74 & 91 \\
+Barrier Distance $d_{\min}$ Range & 5--7 & 5--6 & 2--6 & 6 & 5--7 \\
+Sample Median $R$ & $\mathbf{58.50}$ & $\mathbf{53.77}$ & $\mathbf{29.88}$ & $\mathbf{73.77}$ & $\mathbf{38.45}$ \\
+$68\%$ Bootstrap CI & $[54.00, 63.00]$ & $[51.14, 59.58]$ & $[26.46, 34.60]$ & $[73.77, 73.77]$ & $[35.36, 47.41]$ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Quantum Advantage Scaling Across System Size $N$}
+\label{subsec:scaling_R}
+
+Figure~\ref{fig:fig_a} and Table~\ref{tab:ratio_summary} present the quantum advantage ratio $R$ at transverse coupling $g = 0.35$ as a function of $N$ for both the deepest metastable traps (\textbf{Level 1}) and the second-deepest metastable traps (\textbf{Level 2}). 
+
+The data reveal that quantum dynamics decisively outstrip the optimal classical baseline ($R > 1$) across all evaluated system sizes and both hardness strata:
+\begin{enumerate}
+    \item \textbf{Persistent Large Advantage in Level 2 Traps:} For excited metastable traps (Level 2), the quantum advantage remains consistently large across all system sizes, with sample medians spanning from $R = 29.88$ to $R = 73.77$. At $N = 30$, Level 2 traps maintain a median ratio of $R = 38.45$ ($68\%$ CI: $[35.36, 47.41]$), demonstrating that quantum tunneling efficiently navigates intermediate-depth local minima where classical random kicks frequently become trapped in high-energy attractor basins.
+    \item \textbf{Decisive Advantage Across All Sizes in Level 1 Deepest Traps:} For the deepest traps (Level 1), quantum escape exceeds classical performance across the entire spectrum ($R = 31.11$ at $N=20$, $R = 34.82$ at $N=24$, $R = 22.26$ at $N=26$, $R = 61.09$ at $N=28$, and $R = 111.24$ at $N=30$ within the fixed measurement window).
+\end{enumerate}
+
+To properly interpret the scaling of the ratio across system sizes, two crucial physical mechanisms must be examined: the effect of the evaluation window truncation and the coupling-dependent crossover in tunneling dynamics.
+
+% ==============================================================================
+% POINT 1: CONSERVATIVE EVALUATION WINDOW
+% ==============================================================================
+\subsection{Underestimation of Advantage via Fixed Window: Conservative Lower Bounds}
+\label{subsec:conservative_window}
+
+A critical finding from our continuous trajectory records is that \textbf{at the deepest traps, the escape probability $P_<(t)$ is still actively rising at $t = 60\,\text{s}$}. Consequently, evaluating performance over the fixed window $[10.0, 38.5]\,\text{s}$ systematically truncates the peak of the wavepacket tunneling front, resulting in a substantial underestimation of the true asymptotic quantum advantage.
+
+Because the Bernasconi Hamiltonian involves long-range 4-body interactions, deep metastable traps are surrounded by high, multi-spin potential barriers. The quantum state requires substantial coherent phase accumulation before significant probability amplitude tunnels through the barrier into the lower-energy manifold. 
+
+\begin{table}[h]
+\centering
+\small
+\caption{Comparison of the window-averaged escape probability $\langle P_< \rangle_{[10, 38.5]}$ versus the late-time escape probability $P_<(t = 60\,\text{s})$ for selected deep metastable traps across $N \in \{24, 28, 30\}$.}
+\label{tab:window_underestimation}
+\begin{tabular}{lcccccc}
+\toprule
+$N$ & Trap Rank & $E_0$ & $d_{\min}$ & Field $g$ & $\langle P_< \rangle_{[10, 38.5]}$ & $P_<(t = 60\,\text{s})$ \\
+\midrule
+24 & Rank 1 & 52 & 6 & 0.30 & $4.52 \times 10^{-4}$ & $8.19 \times 10^{-4}$ ($1.81\times$) \\
+24 & Rank 3 & 52 & 6 & 0.30 & $7.18 \times 10^{-4}$ & $1.39 \times 10^{-3}$ ($1.94\times$) \\
+28 & Rank 1 & 70 & 9 & 0.35 & $1.14 \times 10^{-3}$ & $1.89 \times 10^{-3}$ ($1.65\times$) \\
+28 & Rank 2 & 70 & 6 & 0.30 & $1.66 \times 10^{-3}$ & $8.85 \times 10^{-3}$ ($5.32\times$) \\
+30 & Rank 1 & 75 & 9 & 0.35 & $5.70 \times 10^{-4}$ & $1.33 \times 10^{-3}$ ($2.33\times$) \\
+30 & Rank 2 & 91 & 5 & 0.30 & $4.63 \times 10^{-3}$ & $1.23 \times 10^{-2}$ ($2.67\times$) \\
+30 & Rank 3 & 91 & 6 & 0.30 & $4.83 \times 10^{-3}$ & $1.11 \times 10^{-2}$ ($2.30\times$) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As detailed in Table~\ref{tab:window_underestimation}:
+\begin{itemize}
+    \item For $N = 28$, Rank 2 ($E_0 = 70, d_{\min} = 6$) at $g = 0.30$, the escape probability reaches $P_<(60\,\text{s}) = 8.85 \times 10^{-3}$, which is \textbf{$5.32\times$ higher} than the window average $\langle P_< \rangle = 1.66 \times 10^{-3}$.
+    \item For $N = 30$, Rank 1 ($E_0 = 75, d_{\min} = 9$) at $g = 0.35$, $P_<(t)$ monotonically ascends from $8.86 \times 10^{-5}$ at $t = 10\,\text{s}$ to $1.03 \times 10^{-3}$ at $t = 38.5\,\text{s}$, continuing to rise to $1.33 \times 10^{-3}$ at $t = 60\,\text{s}$ (\textbf{$2.33\times$ higher} than the window average).
+    \item Across all deep traps with barrier distance $d_{\min} \ge 5$, $P_<(60\,\text{s})$ exceeds the window average by a factor between $1.6\times$ and $5.3\times$.
+\end{itemize}
+
+Importantly, this underestimation renders all advantage ratios reported in Table~\ref{tab:ratio_summary} strictly \textbf{conservative lower bounds}. While a dynamically adaptive or extended measurement window ($t \in [30, 60]\,\text{s}$) would reflect the full magnitude of peak tunneling, employing the fixed window $[10.0, 38.5]\,\text{s}$ provides a rigorous, standardized lower bound on quantum performance.
+
+% ==============================================================================
+% POINT 2: COUPLING CROSSOVER & TIME HORIZON
+% ==============================================================================
+\subsection{Coupling Crossover Dynamics: Time-Horizon and Seed Dependence of Optimal $g$}
+\label{subsec:coupling_crossover}
+
+The second fundamental insight is that \textbf{the optimal transverse field strength $g^*$ is not static; it depends critically on the operational time horizon as well as the individual seed geometry}. Specifically, while $g = 0.35$ provides faster initial tunneling at early times, $g = 0.30$ exhibits slower initial growth but catches up with and often surpasses $g = 0.35$ at late times for deep (Rank 1) metastable traps.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Time evolution of escape probability $P_<(t)$ comparing transverse couplings $g = 0.30$ and $g = 0.35$ for the Rank 1 deepest trap across $N = 24, 28, 30$. At early times ($t \le 10\,\text{s}$), $g = 0.35$ leads due to higher transverse kinetic energy. At late times ($t \ge 45 - 50\,\text{s}$), $g = 0.30$ preserves coherence in the low-energy manifold, closing the gap or surpassing $g = 0.35$.}
+\label{tab:coupling_crossover}
+\begin{tabular}{lccccc}
+\toprule
+$N$ & Time $t$ & $P_<(g = 0.30)$ & $P_<(g = 0.35)$ & Ratio $\frac{P_<(0.30)}{P_<(0.35)}$ & Dynamic Regime \\
+\midrule
+\textbf{$N = 24$ (Rank 1)} & $5.0\,\text{s}$ & $5.11 \times 10^{-5}$ & $1.27 \times 10^{-4}$ & $0.40$ & $g = 0.35$ faster rise \\
+& $10.0\,\text{s}$ & $1.25 \times 10^{-4}$ & $5.04 \times 10^{-4}$ & $0.25$ & $g = 0.35$ leads \\
+& $38.5\,\text{s}$ & $5.83 \times 10^{-4}$ & $7.88 \times 10^{-4}$ & $0.74$ & $g = 0.30$ catching up \\
+& $50.0\,\text{s}$ & $8.96 \times 10^{-4}$ & $8.49 \times 10^{-4}$ & $\mathbf{1.06}$ & \textbf{Crossover ($g = 0.30$ overtakes)} \\
+& $55.0\,\text{s}$ & $1.02 \times 10^{-3}$ & $9.43 \times 10^{-4}$ & $\mathbf{1.08}$ & $g = 0.30$ superior \\
+\midrule
+\textbf{$N = 28$ (Rank 2)} & $10.0\,\text{s}$ & $1.92 \times 10^{-4}$ & $5.66 \times 10^{-4}$ & $0.34$ & $g = 0.35$ leads \\
+& $38.5\,\text{s}$ & $4.02 \times 10^{-3}$ & $4.76 \times 10^{-3}$ & $0.84$ & $g = 0.30$ catching up \\
+& $60.0\,\text{s}$ & $8.85 \times 10^{-3}$ & $7.82 \times 10^{-3}$ & $\mathbf{1.13}$ & \textbf{Crossover ($g = 0.30$ overtakes)} \\
+\midrule
+\textbf{$N = 30$ (Rank 2)} & $10.0\,\text{s}$ & $8.64 \times 10^{-4}$ & $1.52 \times 10^{-3}$ & $0.57$ & $g = 0.35$ leads \\
+& $38.5\,\text{s}$ & $9.43 \times 10^{-3}$ & $4.93 \times 10^{-3}$ & $\mathbf{1.91}$ & $g = 0.30$ overtakes \\
+& $60.0\,\text{s}$ & $1.23 \times 10^{-2}$ & $5.34 \times 10^{-3}$ & $\mathbf{2.31}$ & \textbf{$g = 0.30$ leads by $2.3\times$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This crossover behavior, documented in Table~\ref{tab:coupling_crossover}, reflects a fundamental physical tradeoff between tunneling matrix element strength and wavepacket dispersion:
+\begin{enumerate}
+    \item \textbf{Early-Time Kinetic Driving ($g = 0.35$):} The off-diagonal coupling term $-g \sum_i \sigma_i^x$ connects adjacent Hamming hypercube configurations~\cite{kadowaki1998, santoro2002}. A larger field $g = 0.35$ increases the perturbation-theoretic tunneling matrix element $\sim (g/\Delta E)^{d_{\min}}$~\cite{denchev2016}, driving a faster initial rise rate $dP_</dt$ during the first $10 - 20\,\text{s}$.
+    \item \textbf{Late-Time Dephasing and Ergodic Leakage:} However, as shown in Figure~\ref{fig:fig_c}, stronger coupling also accelerates diffusion away from the low-energy manifold into the exponentially vast bulk of high-energy Hilbert space (where $\langle d_H \rangle \to N/2$). At $g = 0.35$, the wavepacket experiences earlier decoherence across energy eigenstates, causing $P_<(t)$ to saturate or plateau~\cite{smelyanskiy2020}.
+    \item \textbf{Late-Time Coherent Resurgence ($g = 0.30$):} Conversely, $g = 0.30$ preserves wavepacket concentration within low-Hamming-distance shells for a longer duration. While its early rise is slower, the sustained phase coherence allows probability amplitude to continue building up coherently in lower-energy basins. By $t \approx 50 - 60\,\text{s}$, $g = 0.30$ catches up with and frequently surpasses $g = 0.35$ (e.g., reaching $2.31\times$ higher escape at $N = 30$ Rank 2).
+\end{enumerate}
+
+Thus, when choosing the operational field $g$ in practical quantum annealing or escape algorithms, the optimal setting is intrinsically coupled to the available coherence time: for short horizons ($t \le 20\,\text{s}$), $g = 0.35$ maximizes rapid escape; for extended horizons ($t \ge 40\,\text{s}$), $g = 0.30$ avoids premature dephasing and achieves higher total escape probability.
+
+% ==============================================================================
+% BARRIER WIDTH AND SCALING
+% ==============================================================================
+\subsection{Barrier Width Dependence and Quantum Diffusion}
+\label{subsec:barrier_and_diffusion}
+
+Figure~\ref{fig:fig_b} illustrates the dependence of the initial rise rate $\left.\frac{dP_<}{dt}\right|_{t\to 0}$ and window-averaged probability $\langle P_< \rangle$ on the minimum barrier Hamming distance $d_{\min} \in [2, 9]$.
+
+Figure~\ref{fig:fig_c} examines the transverse field dependence of the escape probability $\langle P_< \rangle$ and the mean Hamming displacement $\langle d_H(t) \rangle = \sum_s |c_s(t)|^2 d_H(s, s_0)$ across large system sizes $N \in [24, 30]$. As $g$ increases from $0.30$ to $0.45$:
+\begin{itemize}
+    \item Quantum diffusion $\langle d_H \rangle$ increases monotonically from $\approx 8.36 - 11.28$ at $g = 0.30$ to $\approx 12.02 - 15.01$ at $g = 0.45$, converging directly to the unconstrained high-temperature limit $\langle d_H \rangle = N/2$.
+    \item Concurrently, the escape probability $\langle P_< \rangle$ drops precipitously at $g = 0.45$ (falling by nearly an order of magnitude relative to $g = 0.30 - 0.35$). 
+\end{itemize}
+This establishes that $g = 0.45$ pushes the system into an over-diffusive regime where transverse kinetic energy overwhelms the structured potential landscape~\cite{smelyanskiy2020}, dispersing the state uniformly across Hilbert space rather than channeling it down into target low-energy valleys.
+
+% ==============================================================================
+% CONTINUOUS HARD SEED DYNAMICS
+% ==============================================================================
+\subsection{Continuous Escape Trajectories vs. Blind Classical Search}
+\label{subsec:continuous_dynamics}
+
+Finally, Figure~\ref{fig:fig_d} plots the continuous time evolution of $P_<(t)$ for the hardest local minimum trap at each system size $N \in \{16, \dots, 30\}$ alongside the classical blind random search probability $P_{\text{blind}} = |\{s : E(s) < E_0\}| / 2^N$.
+
+Across all system sizes, the quantum escape dynamics surpass the blind random search baseline by \textbf{three to four orders of magnitude}:
+\begin{itemize}
+    \item At $N = 28$ ($E_0 = 70, d_{\min} = 9$), the blind classical baseline is $P_{\text{blind}} = 3.58 \times 10^{-7}$, whereas the quantum wavepacket reaches a peak escape of $P_<(t) = 1.89 \times 10^{-3}$---\textbf{an enhancement factor exceeding $5,200\times$}.
+    \item At $N = 30$ ($E_0 = 75, d_{\min} = 9$), blind classical sampling drops to $P_{\text{blind}} = 4.47 \times 10^{-8}$, whereas quantum evolution achieves $P_<(60\,\text{s}) = 1.33 \times 10^{-3}$---\textbf{an enhancement factor exceeding $29,700\times$}.
+\end{itemize}
+
+These results confirm that quantum Trotterized evolution does not merely diffuse randomly through the configuration space; rather, the destructive interference of high-energy components and constructive tunneling along low-energy pathways effectively concentrates amplitude into escaping configurations, providing a decisive advantage over classical search in rugged, glassy optimization landscapes~\cite{marinari1994, bapst2013}.

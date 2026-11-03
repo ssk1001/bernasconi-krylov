@@ -530,7 +530,7 @@ public:
             }
 
             // Bitstring projective sampling (if shots > 0)
-            if (config.shots_per_point > 0 && current_t >= config.t_start &&
+            if (config.shots_per_point > 0 && current_t >= config.t_start - 1e-9 &&
                 current_t >= next_sample_time - 1e-9 && next_sample_time <= config.t_max + 1e-9) {
                 CHECK_CUSTATEVEC(custatevecSamplerPreprocess(
                     handle, sampler_desc, d_workspace, workspace_size));
@@ -588,8 +588,8 @@ public:
 
         // Compute initial rise rates:
         // average finite difference slope while monotonically increasing: P_<(t_peak1) / t_peak1
-        // and max instantaneous slope
-        if (result.p_less_history.size() >= 2) {
+        // and max instantaneous slope (including the initial rise from t=0, P_<(0)=0 if t_0 > 0)
+        if (!result.p_less_history.empty()) {
             size_t first_drop = result.p_less_history.size() - 1;
             for (size_t i = 1; i < result.p_less_history.size(); ++i) {
                 if (result.p_less_history[i] < result.p_less_history[i - 1]) {
@@ -601,7 +601,9 @@ public:
             double p_p1 = result.p_less_history[first_drop];
             result.initial_rise_rate_avg = (t_p1 > 0.0) ? (p_p1 / t_p1) : 0.0;
 
-            double max_slope = 0.0;
+            double max_slope = (result.time_points[0] > 1e-9)
+                ? (result.p_less_history[0] / result.time_points[0])
+                : 0.0;
             for (size_t i = 0; i < first_drop; ++i) {
                 double dt_step = result.time_points[i + 1] - result.time_points[i];
                 if (dt_step > 1e-9) {
@@ -612,12 +614,15 @@ public:
             result.initial_rise_rate_max = max_slope;
         }
 
-        // Window-averaged <dH>
-        double avg_start = config.record_trajectory ? 0.0 : config.t_start;
+        // Window-averaged <dH> over [t_start, avg_end]
+        double avg_start = config.t_start;
+        double avg_end = (config.num_sample_points > 1 && config.dt_sample > 0.0)
+            ? (config.t_start + (config.num_sample_points - 1) * config.dt_sample)
+            : config.t_max;
         double sum_dh = 0.0;
         size_t count_dh = 0;
         for (size_t i = 0; i < result.time_points.size() && i < result.dh_history.size(); ++i) {
-            if (result.time_points[i] >= avg_start - 1e-9) {
+            if (result.time_points[i] >= avg_start - 1e-9 && result.time_points[i] <= avg_end + 1e-9) {
                 sum_dh += result.dh_history[i];
                 count_dh++;
             }

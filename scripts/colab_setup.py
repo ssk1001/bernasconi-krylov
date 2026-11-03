@@ -9,13 +9,13 @@
 #   3. Run your desired benchmark command in a new cell, e.g.:
 #        !./build/run_benchmark configs/probability_scan_n28.cfg
 # ==============================================================================
-import os, sys, glob, shutil
+import os, sys, glob, shutil, subprocess
 
 # 1. Verify GPU & Install Dependencies
 print("=== Step 1: Checking GPU & Installing Dependencies ===")
-!nvidia-smi
-!pip install -q cuquantum-cu12
-!apt-get install -y -qq libeigen3-dev
+subprocess.run(["nvidia-smi"], check=False)
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "cuquantum-cu12"], check=False)
+subprocess.run(["apt-get", "install", "-y", "-qq", "libeigen3-dev"], check=False)
 
 # 2. Locate cuquantum libraries and headers
 print("\n=== Step 2: Locating cuQuantum SDK ===")
@@ -52,23 +52,26 @@ archive = next((a for a in archive_candidates if os.path.exists(a)), None)
 
 if archive:
     print(f"[+] Extracting {archive} to /content/...")
-    !unzip -o -q {archive} -d /content/
+    os.system(f"unzip -o -q {archive} -d /content/")
 else:
     print("[!] Warning: colab.zip not found in /content/ or /. Please upload colab.zip to the Colab files pane.")
 
 # Ensure we are inside /content
-%cd /content/
+if os.path.exists("/content"):
+    os.chdir("/content/")
 
 # 4. Build run_benchmark with CMake (Release mode)
 print("\n=== Step 4: Building run_benchmark with CMake ===")
-!cmake -B build -S . \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CUDA_ARCHITECTURES="native" \
-    -DCUQUANTUM_ROOT="{cuquantum_root}" \
-    -DCUQUANTUM_INCLUDE_DIR="{cuquantum_include}" \
-    -DCUSTATEVEC_LIB="{cuquantum_so}"
-
-!cmake --build build --target run_benchmark -j$(nproc)
+cmake_cfg_cmd = (
+    f'cmake -B build -S . '
+    f'-DCMAKE_BUILD_TYPE=Release '
+    f'-DCMAKE_CUDA_ARCHITECTURES="native" '
+    f'-DCUQUANTUM_ROOT="{cuquantum_root}" '
+    f'-DCUQUANTUM_INCLUDE_DIR="{cuquantum_include}" '
+    f'-DCUSTATEVEC_LIB="{cuquantum_so}"'
+)
+os.system(cmake_cfg_cmd)
+os.system("cmake --build build --target run_benchmark -j$(nproc)")
 
 print("\n==============================================================================")
 print("[✓] Environment Setup & Build Complete!")

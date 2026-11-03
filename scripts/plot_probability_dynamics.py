@@ -9,8 +9,18 @@ Calculates and displays the time-averaged P_<(t) over [0, t_max], Peak P_<(t), a
 
 import sys
 import os
+
+# Ensure vendored local dependencies are accessible
+lib_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib_py")
+if os.path.exists(lib_dir) and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl_plot")
+
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 def get_known_optimum(n_spins):
