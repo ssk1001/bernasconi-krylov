@@ -64,12 +64,14 @@ lib_py/
 SKQD_BENCHMARK_REPORT.md
 SKQD_BENCHMARK_REPORT.MD
 
-# Track all processed benchmark data (except Tabu search benchmarks)
+# Track all processed benchmark data
 !data_processed/**
 
-# Tabu search datasets and related files
-*tabu*
-*tabu*/**
+# Tabu search source code and scripts
+scripts/*tabu*
+src/classical/tabu_search.hpp
+src/tools/run_tabu.cpp
+tests/test_tabu_search.cpp
 
 # Generated figures
 figures/*.png
