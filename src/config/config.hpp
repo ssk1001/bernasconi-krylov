@@ -104,6 +104,8 @@ struct QuantumConfig {
     double dt_sample = 1.5;        // Sampling delta t (interval between measurement points)
     int k_sample_points = 20;      // Number of measurement points K (times t_k = t_start + k * dt_sample)
     int m_shots_per_point = 100;   // Projective measurement shots M per sampling point
+    int num_sampling_seeds = 3;    // Number of random seeds for projective sampling validation
+    uint64_t seed_stride = 10007;  // Stride between sampling RNG seeds
     bool track_p_less = true;      // Track exact noise-free P_<(t) via GPU reduction
     bool verbose = true;           // Log progress / summary
 
@@ -161,6 +163,13 @@ struct ClassicalConfig {
     size_t restart_trials = 50000;               // Trials for Restart-SD (10^4 - 10^5)
     size_t max_evals_per_start = 0;              // Eval ceiling per trajectory (0 = unlimited until local min)
     size_t batch_size = 10000;                   // Concurrency chunk size for GPU batch descent
+
+    // Tabu search parameters
+    bool enable_tabu = true;                     // Run Tabu Search baselines alongside SD
+    size_t tabu_trials = 50000;                  // Trials per tabu mode (Direct, Kicks, Restart)
+    size_t tabu_max_steps = 100;                 // Max Tabu steps per trial
+    std::vector<int> tabu_kick_d_values = {2, 4, 6, 8, 10, 12}; // Kick distances for Tabu-kick
+    int tabu_tenure = 0;                         // Fixed tenure (0 = dynamic randomized [min, max])
 };
 
 // ----------------------------------------------------------------------------
@@ -311,6 +320,10 @@ struct BenchmarkConfig {
             quantum.k_sample_points = std::stoi(val);
         } else if (key == "m_shots_per_point" || key == "m_samples" || key == "shots_per_point" || key == "m") {
             quantum.m_shots_per_point = std::stoi(val);
+        } else if (key == "num_sampling_seeds" || key == "sampling_seeds" || key == "num_seeds") {
+            quantum.num_sampling_seeds = std::stoi(val);
+        } else if (key == "seed_stride" || key == "sampling_seed_stride") {
+            quantum.seed_stride = std::stoull(val);
         } else if (key == "track_p_less") {
             quantum.track_p_less = config_detail::parse_bool(val);
         } else if (key == "record_trajectory" || key == "track_trajectory" || key == "continuous_trajectory") {
@@ -338,6 +351,16 @@ struct BenchmarkConfig {
             classical.max_evals_per_start = std::stoul(val);
         } else if (key == "batch_size") {
             classical.batch_size = std::stoul(val);
+        } else if (key == "enable_tabu" || key == "run_tabu") {
+            classical.enable_tabu = config_detail::parse_bool(val);
+        } else if (key == "tabu_trials" || key == "num_tabu_trials") {
+            classical.tabu_trials = std::stoul(val);
+        } else if (key == "tabu_max_steps" || key == "tabu_steps") {
+            classical.tabu_max_steps = std::stoul(val);
+        } else if (key == "tabu_kick_d_values" || key == "tabu_kick_d" || key == "tabu_d_values") {
+            classical.tabu_kick_d_values = config_detail::parse_list<int>(val);
+        } else if (key == "tabu_tenure" || key == "tenure") {
+            classical.tabu_tenure = std::stoi(val);
         }
 
         // 5. Output section

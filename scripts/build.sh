@@ -39,12 +39,22 @@ cmake "${CMAKE_ARGS[@]}"
 
 NUM_JOBS="$(nproc 2>/dev/null || echo 4)"
 echo ""
-echo "[BUILD] Compiling run_benchmark and compute_d_min_cli with ${NUM_JOBS} threads..."
-cmake --build build --target run_benchmark --target compute_d_min_cli -j"${NUM_JOBS}"
+echo "[BUILD] Compiling binaries with ${NUM_JOBS} threads..."
+cmake --build build -j"${NUM_JOBS}"
 
 echo ""
 echo "======================================================================"
-echo "[SUCCESS] Build complete! Binaries located at:"
-echo "  - ${ROOT_DIR}/build/run_benchmark"
-echo "  - ${ROOT_DIR}/build/compute_d_min_cli"
+echo "[SUCCESS] Build complete! Binaries located in: ${ROOT_DIR}/build"
+if [ -f "${ROOT_DIR}/build/run_benchmark" ]; then
+    echo "  - ${ROOT_DIR}/build/run_benchmark (GPU Benchmark Pipeline)"
+fi
+if [ -f "${ROOT_DIR}/build/compute_d_min_cli" ]; then
+    echo "  - ${ROOT_DIR}/build/compute_d_min_cli"
+fi
+if [ -f "${ROOT_DIR}/build/exhaustive_minima" ]; then
+    echo "  - ${ROOT_DIR}/build/exhaustive_minima"
+fi
+if [ -f "${ROOT_DIR}/build/run_tabu" ]; then
+    echo "  - ${ROOT_DIR}/build/run_tabu"
+fi
 echo "======================================================================"

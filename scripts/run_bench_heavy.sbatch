@@ -3,9 +3,9 @@
 #SBATCH --partition=gpu_h200_8
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:1
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 #SBATCH --output=slurm_%x_%j.out
 #SBATCH --error=slurm_%x_%j.err
 
@@ -20,6 +20,12 @@ source scripts/setup_env.sh cuquantum_env
 
 # 2. Ensure directories exist
 mkdir -p data_processed seeds
+
+# 4. Verify or build benchmark executable
+if [ ! -f "build/run_benchmark" ]; then
+    echo "[BUILD] build/run_benchmark not found. Building now..."
+    bash scripts/build.sh cuquantum_env
+fi
 
 HEAVY_N=(28 30)
 

@@ -1,0 +1,82 @@
+{
+  "N": 20,
+  "E_star": 26,
+  "levels": [
+    {
+      "E0": 34,
+      "orbits": [
+        {
+          "canonical_id": "0x52CC",
+          "bitstring": "00000101001011001100",
+          "d_min": 8,
+          "sd_hit_fraction": 0.002200
+        },
+        {
+          "canonical_id": "0x86C5",
+          "bitstring": "00001000011011000101",
+          "d_min": 6,
+          "sd_hit_fraction": 0.001970
+        },
+        {
+          "canonical_id": "0x1D424",
+          "bitstring": "00011101010000100100",
+          "d_min": 8,
+          "sd_hit_fraction": 0.003100
+        },
+        {
+          "canonical_id": "0x1F76B",
+          "bitstring": "00011111011101101011",
+          "d_min": 8,
+          "sd_hit_fraction": 0.003020
+        }
+      ]
+    },
+    {
+      "E0": 38,
+      "orbits": [
+        {
+          "canonical_id": "0x4D4E",
+          "bitstring": "00000100110101001110",
+          "d_min": 7,
+          "sd_hit_fraction": 0.002900
+        },
+        {
+          "canonical_id": "0x62B6",
+          "bitstring": "00000110001010110110",
+          "d_min": 5,
+          "sd_hit_fraction": 0.003870
+        },
+        {
+          "canonical_id": "0x962E",
+          "bitstring": "00001001011000101110",
+          "d_min": 5,
+          "sd_hit_fraction": 0.001270
+        },
+        {
+          "canonical_id": "0xAF36",
+          "bitstring": "00001010111100110110",
+          "d_min": 5,
+          "sd_hit_fraction": 0.005480
+        },
+        {
+          "canonical_id": "0x11F2D",
+          "bitstring": "00010001111100101101",
+          "d_min": 5,
+          "sd_hit_fraction": 0.003330
+        },
+        {
+          "canonical_id": "0x2253C",
+          "bitstring": "00100010010100111100",
+          "d_min": 7,
+          "sd_hit_fraction": 0.001950
+        },
+        {
+          "canonical_id": "0x38BF6",
+          "bitstring": "00111000101111110110",
+          "d_min": 7,
+          "sd_hit_fraction": 0.002500
+        }
+      ]
+    }
+  ]
+}

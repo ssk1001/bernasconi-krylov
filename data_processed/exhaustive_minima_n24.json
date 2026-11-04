@@ -1,0 +1,28 @@
+{
+  "N": 24,
+  "E_star": 36,
+  "levels": [
+    {
+      "E0": 44,
+      "orbits": [
+        {
+          "canonical_id": "0x5D2C6",
+          "bitstring": "000001011101001011000110",
+          "d_min": 8,
+          "sd_hit_fraction": 0.000520
+        }
+      ]
+    },
+    {
+      "E0": 48,
+      "orbits": [
+        {
+          "canonical_id": "0x38C95",
+          "bitstring": "000000111000110010010101",
+          "d_min": 9,
+          "sd_hit_fraction": 0.000740
+        }
+      ]
+    }
+  ]
+}

@@ -3,13 +3,13 @@
 #SBATCH --partition=gpu_h100_4
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:1
-#SBATCH --time=01:00:00
+#SBATCH --time=05:00:00
 #SBATCH --output=slurm_%x_%j.out
 #SBATCH --error=slurm_%x_%j.err
 
-echo "=== Starting Grouped Fast Benchmark (N = 16, 20, 24, 26) on $(hostname) at $(date) ==="
+echo "=== Starting Grouped Fast Benchmark (N = 20, 22, 24, 26) on $(hostname) at $(date) ==="
 echo "--- GPU Allocation ---"
 nvidia-smi
 
@@ -21,7 +21,13 @@ source scripts/setup_env.sh cuquantum_env
 # 2. Ensure directories exist
 mkdir -p data_processed seeds
 
-FAST_N=(16 20 24 26)
+# 4. Verify or build benchmark executable
+if [ ! -f "build/run_benchmark" ]; then
+    echo "[BUILD] build/run_benchmark not found. Building now..."
+    bash scripts/build.sh cuquantum_env
+fi
+
+FAST_N=(20 22 24 26)
 
 for n in "${FAST_N[@]}"; do
     echo "======================================================================"

@@ -26,12 +26,6 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall")
 # Find Eigen3
 find_package(Eigen3 REQUIRED)
 
-# Find OpenMP for accelerated CPU classical algorithms
-find_package(OpenMP)
-if(OpenMP_CXX_FOUND)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-endif()
-
 # ==============================================================================
 # Modern Unified Benchmark Executor (CUDA + cuQuantum Target)
 # ==============================================================================
@@ -121,9 +115,17 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/tools/run_tabu.cpp")
         ${CMAKE_SOURCE_DIR}/src/labs_energy
         ${CMAKE_SOURCE_DIR}/src/classical
     )
-    if(OpenMP_CXX_FOUND)
-        target_link_libraries(run_tabu PRIVATE OpenMP::OpenMP_CXX)
-    endif()
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/tools/exhaustive_minima.cpp")
+    add_executable(exhaustive_minima
+        src/tools/exhaustive_minima.cpp
+    )
+    target_include_directories(exhaustive_minima PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/labs_energy
+        ${CMAKE_SOURCE_DIR}/src/classical
+    )
 endif()
 
 # ==============================================================================
@@ -147,9 +149,6 @@ if(BUILD_UNIT_TESTS)
             ${CMAKE_SOURCE_DIR}/src/subspace
         )
         target_link_libraries(${test_name} PRIVATE Eigen3::Eigen)
-        if(OpenMP_CXX_FOUND)
-            target_link_libraries(${test_name} PRIVATE OpenMP::OpenMP_CXX)
-        endif()
         add_test(NAME ${test_name} COMMAND ${test_name} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     endforeach()
 

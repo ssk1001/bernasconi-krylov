@@ -243,6 +243,8 @@ struct SamplerConfig {
     int num_sample_points = 20;    // K: Number of measurement intervals
     int shots_per_point = 100;     // M: Number of bitstring samples per point
     uint64_t seed = 42;            // RNG seed for quantum measurement collapses
+    int num_sampling_seeds = 3;    // Number of random seeds for projective sampling validation
+    uint64_t seed_stride = 10007;  // Stride between sampling RNG seeds
 
     // Delayed sampling / burn-in parameters
     double t_start = 0.0;          // Burn-in time before sampling begins (e.g. 10.0s)
@@ -257,15 +259,28 @@ struct SamplerConfig {
     double dt_trajectory = 0.0;     // Trajectory logging interval (<= 0 defaults to dt, i.e. every step)
 };
 
+struct SeedSamplingStats {
+    uint64_t seed = 0;
+    size_t total_shots_collected = 0;
+    size_t improved_shots = 0;
+    double success_rate = 0.0;
+    double per_eval_rate = 0.0;
+    double mean_hamming_flips = 0.0;
+    int64_t best_energy = std::numeric_limits<int64_t>::max();
+};
+
 struct SamplingResult {
-    // 1. Quantum sampled Krylov basis
+    // 1. Quantum sampled Krylov basis (primary seed / aggregated)
     std::vector<SpinState> unique_basis;
-    size_t total_shots_collected = 0; // Total trials (samples)
-    size_t improved_shots = 0;        // Sampled states with E(s) < E_og (successes)
+    size_t total_shots_collected = 0; // Total trials (samples for primary seed)
+    size_t improved_shots = 0;        // Sampled states with E(s) < E_og (successes for primary seed)
     double success_rate = 0.0;        // improved_shots / total_shots_collected
     double per_eval_rate = 0.0;       // improved_shots / total_evals
     size_t total_evals = 0;           // Total evaluations taken
     double mean_hamming_flips = 0.0;  // Average Hamming distance of samples from seed
+
+    // Detailed per-sampling-seed validation breakdown
+    std::vector<SeedSamplingStats> seed_stats;
 
     // 2. Tunneling Probability & Diffusion Dynamics
     std::vector<double> time_points;
@@ -460,7 +475,15 @@ public:
 
         std::vector<double> rand_nums(shots);
         std::vector<custatevecIndex_t> sampled_indices(shots);
-        std::mt19937_64 rng(config.seed);
+        int n_seeds = std::max(1, config.num_sampling_seeds);
+        std::vector<std::mt19937_64> rngs(n_seeds);
+        std::vector<SeedSamplingStats> seed_stats(n_seeds);
+        for (int s = 0; s < n_seeds; ++s) {
+            uint64_t cur_seed = config.seed + static_cast<uint64_t>(s) * config.seed_stride;
+            rngs[s].seed(cur_seed);
+            seed_stats[s].seed = cur_seed;
+            seed_stats[s].best_energy = result.start_energy;
+        }
         std::uniform_real_distribution<double> dist(0.0, 1.0);
 
         // 4. Time Evolution & Measurement Loops
@@ -535,21 +558,35 @@ public:
                 CHECK_CUSTATEVEC(custatevecSamplerPreprocess(
                     handle, sampler_desc, d_workspace, workspace_size));
 
-                for (int i = 0; i < shots; ++i) rand_nums[i] = dist(rng);
+                for (int s_idx = 0; s_idx < n_seeds; ++s_idx) {
+                    for (int i = 0; i < shots; ++i) rand_nums[i] = dist(rngs[s_idx]);
 
-                CHECK_CUSTATEVEC(custatevecSamplerSample(
-                    handle, sampler_desc, sampled_indices.data(), bit_ordering.data(),
-                    static_cast<uint32_t>(config.n), rand_nums.data(),
-                    static_cast<uint32_t>(shots), CUSTATEVEC_SAMPLER_OUTPUT_RANDNUM_ORDER));
+                    CHECK_CUSTATEVEC(custatevecSamplerSample(
+                        handle, sampler_desc, sampled_indices.data(), bit_ordering.data(),
+                        static_cast<uint32_t>(config.n), rand_nums.data(),
+                        static_cast<uint32_t>(shots), CUSTATEVEC_SAMPLER_OUTPUT_RANDNUM_ORDER));
 
-                for (int i = 0; i < shots; ++i) {
-                    uint64_t bit_val = static_cast<uint64_t>(sampled_indices[i]);
-                    SpinState s{bit_val};
-                    unique_set.insert(s);
-                    total_hamming_flips += start_state.hamming_distance(s);
-                    if (eval.calcEnergy(s) < result.start_energy) {
-                        result.improved_shots++;
+                    uint64_t flips_this_seed = 0;
+                    for (int i = 0; i < shots; ++i) {
+                        uint64_t bit_val = static_cast<uint64_t>(sampled_indices[i]);
+                        SpinState s{bit_val};
+                        unique_set.insert(s);
+                        int d = start_state.hamming_distance(s);
+                        flips_this_seed += d;
+                        if (s_idx == 0) total_hamming_flips += d;
+                        int64_t e = eval.calcEnergy(s);
+                        if (e < seed_stats[s_idx].best_energy) {
+                            seed_stats[s_idx].best_energy = e;
+                        }
+                        if (e < result.start_energy) {
+                            seed_stats[s_idx].improved_shots++;
+                            if (s_idx == 0) {
+                                result.improved_shots++;
+                            }
+                        }
                     }
+                    seed_stats[s_idx].total_shots_collected += shots;
+                    seed_stats[s_idx].mean_hamming_flips += static_cast<double>(flips_this_seed);
                 }
                 result.total_shots_collected += shots;
                 next_sample_time += sample_interval;
@@ -585,6 +622,16 @@ public:
                 ? (static_cast<double>(result.improved_shots) / static_cast<double>(result.total_evals)) 
                 : 0.0;
         }
+
+        for (int s = 0; s < n_seeds; ++s) {
+            if (seed_stats[s].total_shots_collected > 0) {
+                seed_stats[s].success_rate = static_cast<double>(seed_stats[s].improved_shots) /
+                                             static_cast<double>(seed_stats[s].total_shots_collected);
+                seed_stats[s].per_eval_rate = seed_stats[s].success_rate;
+                seed_stats[s].mean_hamming_flips /= static_cast<double>(seed_stats[s].total_shots_collected);
+            }
+        }
+        result.seed_stats = std::move(seed_stats);
 
         // Compute initial rise rates:
         // average finite difference slope while monotonically increasing: P_<(t_peak1) / t_peak1

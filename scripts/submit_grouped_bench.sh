@@ -1,8 +1,8 @@
 #!/bin/bash
 # ==============================================================================
 # Submit 2 Grouped Benchmark Jobs to respect Slurm QoS limits:
-#   Job 1: Fast suite  (N = 16, 20, 24, 26) -> ~15-20 min
-#   Job 2: Heavy suite (N = 28, 30)         -> ~2-2.5 hours
+#   Job 1: Fast suite  (N = 20, 22, 24, 26) -> ~3.0 hours
+#   Job 2: Heavy suite (N = 28, 30)             -> ~4.8 hours
 #
 # Custom Partition usage (e.g. H100 vs H200):
 #   PARTITION=gpu_h100_8 bash scripts/submit_grouped_bench.sh
@@ -20,8 +20,8 @@ PART_HEAVY="${PARTITION_HEAVY:-${PARTITION:-gpu_h200_8}}"
 echo "======================================================================"
 echo "        Submitting Bernasconi-Krylov Grouped Benchmarks (2 Jobs)      "
 echo "======================================================================"
-echo "  Fast Partition  (N=16,20,24,26) : ${PART_FAST}"
-echo "  Heavy Partition (N=28,30)       : ${PART_HEAVY}"
+echo "  Fast Partition  (N=20,22,24,26)    : ${PART_FAST}"
+echo "  Heavy Partition (N=28,30)          : ${PART_HEAVY}"
 echo "======================================================================"
 
 JOB_IDS=()
@@ -31,7 +31,7 @@ if command -v sbatch &> /dev/null; then
     RES_FAST=$(sbatch -p "${PART_FAST}" scripts/run_bench_fast.sbatch)
     JID_FAST=$(echo "${RES_FAST}" | awk '{print $NF}')
     JOB_IDS+=("${JID_FAST}")
-    echo "[SUBMITTED] Fast Suite  (N=16,20,24,26) -> Job ID: ${JID_FAST}"
+    echo "[SUBMITTED] Fast Suite  (N=20,22,24,26) -> Job ID: ${JID_FAST}"
 
     # 2. Submit Heavy Job
     RES_HEAVY=$(sbatch -p "${PART_HEAVY}" scripts/run_bench_heavy.sbatch)

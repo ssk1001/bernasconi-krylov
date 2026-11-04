@@ -14,7 +14,7 @@ Makefile
 *.a
 *.exe
 *.out
-
+revision_patches_v3.md
 # Compiled project binaries (at repository root)
 /fixed_g_custatevec
 /probability_dynamics

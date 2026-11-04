@@ -1,0 +1,172 @@
+{
+  "N": 26,
+  "E_star": 45,
+  "levels": [
+    {
+      "E0": 53,
+      "orbits": [
+        {
+          "canonical_id": "0x38D4D",
+          "bitstring": "00000000111000110101001101",
+          "d_min": 7,
+          "sd_hit_fraction": 0.000620
+        },
+        {
+          "canonical_id": "0xBA58C",
+          "bitstring": "00000010111010010110001100",
+          "d_min": 9,
+          "sd_hit_fraction": 0.000470
+        },
+        {
+          "canonical_id": "0x21A8D9",
+          "bitstring": "00001000011010100011011001",
+          "d_min": 7,
+          "sd_hit_fraction": 0.000300
+        },
+        {
+          "canonical_id": "0x23C9A9",
+          "bitstring": "00001000111100100110101001",
+          "d_min": 8,
+          "sd_hit_fraction": 0.000490
+        },
+        {
+          "canonical_id": "0x2A18DB",
+          "bitstring": "00001010100001100011011011",
+          "d_min": 6,
+          "sd_hit_fraction": 0.000570
+        },
+        {
+          "canonical_id": "0x788896",
+          "bitstring": "00011110001000100010010110",
+          "d_min": 7,
+          "sd_hit_fraction": 0.000550
+        }
+      ]
+    },
+    {
+      "E0": 61,
+      "orbits": [
+        {
+          "canonical_id": "0x38D95",
+          "bitstring": "00000000111000110110010101",
+          "d_min": 4,
+          "sd_hit_fraction": 0.000440
+        },
+        {
+          "canonical_id": "0x563A6",
+          "bitstring": "00000001010110001110100110",
+          "d_min": 7,
+          "sd_hit_fraction": 0.000360
+        },
+        {
+          "canonical_id": "0x5D2C6",
+          "bitstring": "00000001011101001011000110",
+          "d_min": 7,
+          "sd_hit_fraction": 0.000500
+        },
+        {
+          "canonical_id": "0x71AB2",
+          "bitstring": "00000001110001101010110010",
+          "d_min": 9,
+          "sd_hit_fraction": 0.000310
+        },
+        {
+          "canonical_id": "0x9CB45",
+          "bitstring": "00000010011100101101000101",
+          "d_min": 6,
+          "sd_hit_fraction": 0.000390
+        },
+        {
+          "canonical_id": "0xE469A",
+          "bitstring": "00000011100100011010011010",
+          "d_min": 7,
+          "sd_hit_fraction": 0.000320
+        },
+        {
+          "canonical_id": "0xE54D3",
+          "bitstring": "00000011100101010011010011",
+          "d_min": 6,
+          "sd_hit_fraction": 0.000610
+        },
+        {
+          "canonical_id": "0xEA72C",
+          "bitstring": "00000011101010011100101100",
+          "d_min": 5,
+          "sd_hit_fraction": 0.000570
+        },
+        {
+          "canonical_id": "0x13472B",
+          "bitstring": "00000100110100011100101011",
+          "d_min": 8,
+          "sd_hit_fraction": 0.000370
+        },
+        {
+          "canonical_id": "0x14D3B1",
+          "bitstring": "00000101001101001110110001",
+          "d_min": 9,
+          "sd_hit_fraction": 0.000190
+        },
+        {
+          "canonical_id": "0x1B2B18",
+          "bitstring": "00000110110010101100011000",
+          "d_min": 6,
+          "sd_hit_fraction": 0.000370
+        },
+        {
+          "canonical_id": "0x1B6AE7",
+          "bitstring": "00000110110110101011100111",
+          "d_min": 8,
+          "sd_hit_fraction": 0.000300
+        },
+        {
+          "canonical_id": "0x1CEADB",
+          "bitstring": "00000111001110101011011011",
+          "d_min": 6,
+          "sd_hit_fraction": 0.000310
+        },
+        {
+          "canonical_id": "0x216C8E",
+          "bitstring": "00001000010110110010001110",
+          "d_min": 5,
+          "sd_hit_fraction": 0.000470
+        },
+        {
+          "canonical_id": "0x2A31B6",
+          "bitstring": "00001010100011000110110110",
+          "d_min": 7,
+          "sd_hit_fraction": 0.000160
+        },
+        {
+          "canonical_id": "0x2F2891",
+          "bitstring": "00001011110010100010010001",
+          "d_min": 6,
+          "sd_hit_fraction": 0.000220
+        },
+        {
+          "canonical_id": "0x61509B",
+          "bitstring": "00011000010101000010011011",
+          "d_min": 7,
+          "sd_hit_fraction": 0.000190
+        },
+        {
+          "canonical_id": "0x62A06D",
+          "bitstring": "00011000101010000001101101",
+          "d_min": 5,
+          "sd_hit_fraction": 0.000290
+        },
+        {
+          "canonical_id": "0x82BC6C",
+          "bitstring": "00100000101011110001101100",
+          "d_min": 7,
+          "sd_hit_fraction": 0.000220
+        },
+        {
+          "canonical_id": "0xA189F4",
+          "bitstring": "00101000011000100111110100",
+          "d_min": 7,
+          "sd_hit_fraction": 0.000310
+        }
+      ]
+    }
+  ]
+}

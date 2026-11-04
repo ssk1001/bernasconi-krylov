@@ -15,6 +15,7 @@
 #include "../config/config.hpp"
 #include "../labs_energy/labs_energy.hpp"
 #include "../classical/classical.cuh"
+#include "../classical/tabu_search.hpp"
 #include "../sampling/sampler.cuh"
 #include "../subspace/diagonalizer.cuh"
 
@@ -29,6 +30,12 @@ struct SingleTrapBenchmark {
     SpinState trap_state;
     int64_t trap_energy = 0; // E_0
     int d_min = 0;           // Barrier distance to nearest state with E < E_0
+
+    // Trap Identification & Metadata
+    std::string canonical_id = "";
+    std::string canonical_hex = "";
+    std::string canonical_bitstring = "";
+    double basin_hit_fraction = 0.0;
 
     // Quantum dynamics metrics
     double window_avg_p_less = 0.0;     // Noise-free window-averaged P_<
@@ -48,6 +55,15 @@ struct SingleTrapBenchmark {
     double peak_p_less = 0.0;
     double peak_time = 0.0;
 
+    // Multi-seed projective sampling validation
+    int num_sampling_seeds = 1;
+    std::vector<uint64_t> sample_seeds;
+    std::vector<double> sample_success_rates;
+    std::vector<size_t> sample_improved_shots;
+    std::vector<size_t> sample_total_shots;
+    std::vector<int64_t> sample_best_energies;
+    std::vector<double> sample_mean_hamming_flips;
+
     // Classical Kick+SD metrics (Method 3)
     int best_d = 0; // d* = argmax_d r(d)
     double best_d_rate = 0.0; // r(d*) = successes(d*) / evaluations(d*)
@@ -66,6 +82,39 @@ struct SingleTrapBenchmark {
     size_t restart_trials = 0;
     size_t restart_evals = 0;
     double restart_time_sec = 0.0;
+
+    // Classical Tabu Search baselines
+    bool tabu_enabled = false;
+    double tabu_direct_rate = 0.0;
+    size_t tabu_direct_successes = 0;
+    size_t tabu_direct_trials = 0;
+    size_t tabu_direct_evals = 0;
+    double tabu_direct_time_sec = 0.0;
+
+    int tabu_kick_d = 0;
+    double tabu_kick_rate = 0.0;
+    size_t tabu_kick_successes = 0;
+    size_t tabu_kick_trials = 0;
+    size_t tabu_kick_evals = 0;
+    std::map<int, double> tabu_rate_by_d;
+    std::map<int, size_t> tabu_successes_by_d;
+    std::map<int, size_t> tabu_trials_by_d;
+    std::map<int, size_t> tabu_evals_by_d;
+    double tabu_kick_time_sec = 0.0;
+
+    double tabu_restart_rate = 0.0;
+    size_t tabu_restart_successes = 0;
+    size_t tabu_restart_trials = 0;
+    size_t tabu_restart_evals = 0;
+    double tabu_restart_time_sec = 0.0;
+
+    double tabu_best_rate = 0.0;
+    std::string tabu_best_method = "";
+
+    // Evaluation accounting
+    size_t sd_total_evaluations = 0;
+    size_t tabu_total_evaluations = 0;
+    size_t total_evaluations = 0;
 };
 
 // ============================================================================
@@ -166,12 +215,17 @@ public:
                 std::cout << "[Connector] Loading cached local minima from: " << seed_file << "\n";
             }
             families = ClassicalLogger::load_from_csv(seed_file, n);
-            if (families.size() >= traps_cfg.benchmark_trap_count) {
+            if (!families.empty()) {
                 cache_loaded = true;
+                if (traps_cfg.benchmark_trap_count > 0 && families.size() < traps_cfg.benchmark_trap_count) {
+                    if (verbose) {
+                        std::cout << "[Connector] Cache has " << families.size()
+                                  << " traps (fewer than " << traps_cfg.benchmark_trap_count
+                                  << " requested). Using all " << families.size() << " cached traps.\n";
+                    }
+                }
             } else if (verbose) {
-                std::cout << "[Connector] Cache has only " << families.size()
-                          << " traps, but " << traps_cfg.benchmark_trap_count
-                          << " requested. Regenerating...\n";
+                std::cout << "[Connector] Cache file empty. Regenerating...\n";
             }
         }
 
@@ -231,7 +285,7 @@ public:
                 families.begin(), families.end(),
                 [opt_energy](const MinimumFamily& f) { return f.energy > opt_energy; }
             );
-            if (suboptimal_count >= traps_cfg.benchmark_trap_count) {
+            if (suboptimal_count > 0) {
                 families.erase(
                     std::remove_if(families.begin(), families.end(),
                                    [opt_energy](const MinimumFamily& f) { return f.energy <= opt_energy; }),
@@ -246,7 +300,9 @@ public:
             return a.canonical_state.bits < b.canonical_state.bits;
         });
 
-        size_t take_count = std::min(traps_cfg.benchmark_trap_count, families.size());
+        size_t take_count = (traps_cfg.benchmark_trap_count == 0)
+            ? families.size()
+            : std::min(traps_cfg.benchmark_trap_count, families.size());
         families.resize(take_count);
         return families;
     }
@@ -308,6 +364,96 @@ public:
 
         auto t_end_restart = std::chrono::high_resolution_clock::now();
         bench.restart_time_sec = std::chrono::duration<double>(t_end_restart - t_start_restart).count();
+
+        // Calculate total evaluations spent on Steepest Descent baselines
+        bench.sd_total_evaluations = 0;
+        for (const auto& kv : bench.evals_by_d) {
+            bench.sd_total_evaluations += kv.second;
+        }
+        bench.sd_total_evaluations += bench.restart_evals;
+
+        // Run Tabu Search baselines (Tabu-Direct, Tabu-Kick, Tabu-Restart)
+        if (c_cfg.enable_tabu && c_cfg.tabu_trials > 0) {
+            bench.tabu_enabled = true;
+            TabuConfig t_cfg;
+            t_cfg.n = bench.n;
+            t_cfg.max_steps = c_cfg.tabu_max_steps;
+            t_cfg.tabu_tenure = c_cfg.tabu_tenure;
+            t_cfg.dynamic_tenure = (c_cfg.tabu_tenure <= 0);
+            t_cfg.stop_on_escape = true;
+
+            TabuSearch tabu_solver(bench.n, t_cfg);
+
+            // 1. Tabu Direct Escape
+            TabuBenchmarkResult dir_res = tabu_solver.run_escape_trials(
+                bench.trap_state, c_cfg.tabu_trials, &t_cfg, verbose
+            );
+            bench.tabu_direct_rate = dir_res.per_eval_rate;
+            bench.tabu_direct_successes = dir_res.improved_hits;
+            bench.tabu_direct_trials = dir_res.total_trials;
+            bench.tabu_direct_evals = dir_res.total_evals;
+            bench.tabu_direct_time_sec = dir_res.elapsed_sec;
+
+            // 2. Tabu Kicks
+            int best_tabu_d = -1;
+            double max_tabu_krate = -1.0;
+            double total_tabu_kick_time = 0.0;
+
+            for (int d : c_cfg.tabu_kick_d_values) {
+                TabuBenchmarkResult kick_res = tabu_solver.run_kicked_trials(
+                    bench.trap_state, d, c_cfg.tabu_trials, &t_cfg, verbose
+                );
+                bench.tabu_rate_by_d[d] = kick_res.per_eval_rate;
+                bench.tabu_successes_by_d[d] = kick_res.improved_hits;
+                bench.tabu_trials_by_d[d] = kick_res.total_trials;
+                bench.tabu_evals_by_d[d] = kick_res.total_evals;
+                total_tabu_kick_time += kick_res.elapsed_sec;
+
+                if (kick_res.per_eval_rate > max_tabu_krate) {
+                    max_tabu_krate = kick_res.per_eval_rate;
+                    best_tabu_d = d;
+                }
+            }
+
+            bench.tabu_kick_d = (best_tabu_d != -1) ? best_tabu_d : (!c_cfg.tabu_kick_d_values.empty() ? c_cfg.tabu_kick_d_values[0] : 2);
+            bench.tabu_kick_rate = (best_tabu_d != -1) ? bench.tabu_rate_by_d[bench.tabu_kick_d] : 0.0;
+            bench.tabu_kick_successes = (best_tabu_d != -1) ? bench.tabu_successes_by_d[bench.tabu_kick_d] : 0;
+            bench.tabu_kick_trials = (best_tabu_d != -1) ? bench.tabu_trials_by_d[bench.tabu_kick_d] : 0;
+            bench.tabu_kick_evals = (best_tabu_d != -1) ? bench.tabu_evals_by_d[bench.tabu_kick_d] : 0;
+            bench.tabu_kick_time_sec = total_tabu_kick_time;
+
+            // 3. Tabu Random Restart
+            TabuBenchmarkResult rst_res = tabu_solver.run_restart_trials(
+                bench.trap_state, c_cfg.tabu_trials, &t_cfg, verbose
+            );
+            bench.tabu_restart_rate = rst_res.per_eval_rate;
+            bench.tabu_restart_successes = rst_res.improved_hits;
+            bench.tabu_restart_trials = rst_res.total_trials;
+            bench.tabu_restart_evals = rst_res.total_evals;
+            bench.tabu_restart_time_sec = rst_res.elapsed_sec;
+
+            // Determine best Tabu method and rate
+            bench.tabu_best_rate = bench.tabu_direct_rate;
+            bench.tabu_best_method = "Tabu Direct";
+
+            if (bench.tabu_kick_rate > bench.tabu_best_rate) {
+                bench.tabu_best_rate = bench.tabu_kick_rate;
+                bench.tabu_best_method = "Tabu Kick (d=" + std::to_string(bench.tabu_kick_d) + ")";
+            }
+            if (bench.tabu_restart_rate > bench.tabu_best_rate) {
+                bench.tabu_best_rate = bench.tabu_restart_rate;
+                bench.tabu_best_method = "Tabu Restart";
+            }
+
+            // Tabu total evaluations
+            bench.tabu_total_evaluations = bench.tabu_direct_evals;
+            for (const auto& kv : bench.tabu_evals_by_d) {
+                bench.tabu_total_evaluations += kv.second;
+            }
+            bench.tabu_total_evaluations += bench.tabu_restart_evals;
+        }
+
+        bench.total_evaluations = bench.sd_total_evaluations + bench.tabu_total_evaluations;
     }
 
     // ------------------------------------------------------------------------
@@ -337,6 +483,8 @@ public:
         s_cfg.verbose = verbose;
         s_cfg.record_trajectory = q_cfg.record_trajectory;
         s_cfg.dt_trajectory = q_cfg.dt_trajectory;
+        s_cfg.num_sampling_seeds = q_cfg.num_sampling_seeds;
+        s_cfg.seed_stride = q_cfg.seed_stride;
 
 #if HAS_CUSTATEVEC
         auto sampler = create_sampler(n);
@@ -357,6 +505,22 @@ public:
         bench.p_blind = res.p_blind;
         bench.peak_p_less = res.peak_p_less;
         bench.peak_time = res.peak_time;
+
+        bench.num_sampling_seeds = static_cast<int>(res.seed_stats.size());
+        bench.sample_seeds.clear();
+        bench.sample_success_rates.clear();
+        bench.sample_improved_shots.clear();
+        bench.sample_total_shots.clear();
+        bench.sample_mean_hamming_flips.clear();
+        bench.sample_best_energies.clear();
+        for (const auto& ss : res.seed_stats) {
+            bench.sample_seeds.push_back(ss.seed);
+            bench.sample_success_rates.push_back(ss.success_rate);
+            bench.sample_improved_shots.push_back(ss.improved_shots);
+            bench.sample_total_shots.push_back(ss.total_shots_collected);
+            bench.sample_mean_hamming_flips.push_back(ss.mean_hamming_flips);
+            bench.sample_best_energies.push_back(ss.best_energy);
+        }
 #else
         // CPU fallback for testing / simulation without GPU cuQuantum
         if (n <= 12) {
@@ -470,6 +634,18 @@ public:
                 }
             }
             bench.window_avg_dh = (count_dh > 0) ? (sum_dh / count_dh) : (bench.dh_history.empty() ? 0.0 : bench.dh_history.back());
+
+            int n_seeds = std::max(1, q_cfg.num_sampling_seeds);
+            bench.num_sampling_seeds = n_seeds;
+            bench.sample_seeds.resize(n_seeds);
+            bench.sample_success_rates.resize(n_seeds, bench.window_avg_p_less);
+            bench.sample_improved_shots.resize(n_seeds, static_cast<size_t>(std::round(bench.window_avg_p_less * q_cfg.k_sample_points * q_cfg.m_shots_per_point)));
+            bench.sample_total_shots.resize(n_seeds, q_cfg.k_sample_points * q_cfg.m_shots_per_point);
+            bench.sample_mean_hamming_flips.resize(n_seeds, bench.window_avg_dh);
+            bench.sample_best_energies.resize(n_seeds, bench.trap_energy - 2);
+            for (int s = 0; s < n_seeds; ++s) {
+                bench.sample_seeds[s] = seed + static_cast<uint64_t>(s) * q_cfg.seed_stride;
+            }
         } else {
             if (verbose) {
                 std::cout << "[Connector Notice] cuStateVec not available in CPU build. "
@@ -517,16 +693,21 @@ public:
             throw std::runtime_error("BenchmarkConnector: Cannot open results CSV for writing: " + path);
         }
 
-        file << "N,g,trap_rank,trap_energy,d_min,window_avg_p_less,window_avg_dh,"
+        file << "N,g,trap_rank,canonical_id,canonical_hex,trap_energy,d_min,window_avg_p_less,window_avg_dh,"
              << "initial_rise_rate_avg,initial_rise_rate_max,peak_p_less,peak_time,p_blind,"
              << "best_d,best_d_rate,best_d_successes,best_d_trials,best_d_evals,"
              << "restart_rate,restart_successes,restart_trials,restart_evals,"
-             << "quantum_time_sec,kick_time_sec,restart_time_sec,trap_bits\n";
+             << "tabu_best_method,tabu_best_rate,tabu_direct_rate,tabu_kick_d,tabu_kick_rate,tabu_restart_rate,"
+             << "sd_total_evaluations,tabu_total_evaluations,total_evaluations,"
+             << "quantum_time_sec,kick_time_sec,restart_time_sec,tabu_kick_time_sec,"
+             << "sample_seed1_rate,sample_seed2_rate,sample_seed3_rate,trap_bits\n";
 
         for (const auto& r : results) {
             file << r.n << ","
                  << r.g << ","
                  << r.trap_rank << ","
+                 << r.canonical_id << ","
+                 << r.canonical_hex << ","
                  << r.trap_energy << ","
                  << r.d_min << ","
                  << std::scientific << std::setprecision(6) << r.window_avg_p_less << ","
@@ -545,9 +726,22 @@ public:
                  << r.restart_successes << ","
                  << r.restart_trials << ","
                  << r.restart_evals << ","
+                 << "\"" << r.tabu_best_method << "\","
+                 << r.tabu_best_rate << ","
+                 << r.tabu_direct_rate << ","
+                 << r.tabu_kick_d << ","
+                 << r.tabu_kick_rate << ","
+                 << r.tabu_restart_rate << ","
+                 << r.sd_total_evaluations << ","
+                 << r.tabu_total_evaluations << ","
+                 << r.total_evaluations << ","
                  << std::fixed << std::setprecision(4) << r.quantum_time_sec << ","
                  << r.kick_time_sec << ","
                  << r.restart_time_sec << ","
+                 << r.tabu_kick_time_sec << ","
+                 << std::scientific << std::setprecision(6) << (r.sample_success_rates.size() > 0 ? r.sample_success_rates[0] : 0.0) << ","
+                 << std::scientific << std::setprecision(6) << (r.sample_success_rates.size() > 1 ? r.sample_success_rates[1] : 0.0) << ","
+                 << std::scientific << std::setprecision(6) << (r.sample_success_rates.size() > 2 ? r.sample_success_rates[2] : 0.0) << ","
                  << "0x" << std::hex << std::uppercase << r.trap_state.bits << std::dec << "\n";
         }
     }
@@ -624,6 +818,9 @@ public:
             file << "    {\n";
             file << "      \"N\": " << first.n << ",\n";
             file << "      \"trap_rank\": " << first.trap_rank << ",\n";
+            file << "      \"canonical_id\": \"" << first.canonical_id << "\",\n";
+            file << "      \"canonical_hex\": \"" << first.canonical_hex << "\",\n";
+            file << "      \"canonical_bitstring\": \"" << first.canonical_bitstring << "\",\n";
             file << "      \"trap_state_hex\": \"0x" << std::hex << std::uppercase << first.trap_state.bits << std::dec << "\",\n";
             file << "      \"trap_energy_E0\": " << first.trap_energy << ",\n";
             file << "      \"d_min\": " << first.d_min << ",\n";
@@ -664,8 +861,58 @@ public:
             file << "        \"restart_successes\": " << first.restart_successes << ",\n";
             file << "        \"restart_trials\": " << first.restart_trials << ",\n";
             file << "        \"restart_evals\": " << first.restart_evals << ",\n";
+            file << "        \"sd_total_evaluations\": " << first.sd_total_evaluations << ",\n";
+
+            file << "        \"tabu_direct_rate\": " << std::scientific << std::setprecision(6) << first.tabu_direct_rate << ",\n";
+            file << "        \"tabu_direct_successes\": " << first.tabu_direct_successes << ",\n";
+            file << "        \"tabu_direct_trials\": " << first.tabu_direct_trials << ",\n";
+            file << "        \"tabu_direct_evals\": " << first.tabu_direct_evals << ",\n";
+
+            file << "        \"tabu_kick_d\": " << first.tabu_kick_d << ",\n";
+            file << "        \"tabu_kick_rate\": " << std::scientific << std::setprecision(6) << first.tabu_kick_rate << ",\n";
+            file << "        \"tabu_kick_successes\": " << first.tabu_kick_successes << ",\n";
+            file << "        \"tabu_kick_trials\": " << first.tabu_kick_trials << ",\n";
+            file << "        \"tabu_kick_evals\": " << first.tabu_kick_evals << ",\n";
+
+            file << "        \"tabu_rates_by_d\": {";
+            di = 0;
+            for (const auto& kv : first.tabu_rate_by_d) {
+                file << (di > 0 ? ", " : "") << "\"" << kv.first << "\": " << std::scientific << std::setprecision(6) << kv.second;
+                di++;
+            }
+            file << "},\n";
+
+            file << "        \"tabu_trials_by_d\": {";
+            di = 0;
+            for (const auto& kv : first.tabu_trials_by_d) {
+                file << (di > 0 ? ", " : "") << "\"" << kv.first << "\": " << kv.second;
+                di++;
+            }
+            file << "},\n";
+
+            file << "        \"tabu_evals_by_d\": {";
+            di = 0;
+            for (const auto& kv : first.tabu_evals_by_d) {
+                file << (di > 0 ? ", " : "") << "\"" << kv.first << "\": " << kv.second;
+                di++;
+            }
+            file << "},\n";
+
+            file << "        \"tabu_restart_rate\": " << std::scientific << std::setprecision(6) << first.tabu_restart_rate << ",\n";
+            file << "        \"tabu_restart_successes\": " << first.tabu_restart_successes << ",\n";
+            file << "        \"tabu_restart_trials\": " << first.tabu_restart_trials << ",\n";
+            file << "        \"tabu_restart_evals\": " << first.tabu_restart_evals << ",\n";
+
+            file << "        \"tabu_best_rate\": " << std::scientific << std::setprecision(6) << first.tabu_best_rate << ",\n";
+            file << "        \"tabu_best_method\": \"" << first.tabu_best_method << "\",\n";
+            file << "        \"tabu_total_evaluations\": " << first.tabu_total_evaluations << ",\n";
+            file << "        \"total_evaluations\": " << first.total_evaluations << ",\n";
+
             file << "        \"kick_time_sec\": " << std::fixed << std::setprecision(4) << first.kick_time_sec << ",\n";
-            file << "        \"restart_time_sec\": " << std::fixed << std::setprecision(4) << first.restart_time_sec << "\n";
+            file << "        \"restart_time_sec\": " << std::fixed << std::setprecision(4) << first.restart_time_sec << ",\n";
+            file << "        \"tabu_direct_time_sec\": " << std::fixed << std::setprecision(4) << first.tabu_direct_time_sec << ",\n";
+            file << "        \"tabu_kick_time_sec\": " << std::fixed << std::setprecision(4) << first.tabu_kick_time_sec << ",\n";
+            file << "        \"tabu_restart_time_sec\": " << std::fixed << std::setprecision(4) << first.tabu_restart_time_sec << "\n";
             file << "      },\n";
 
             // Quantum dynamics by g
@@ -706,7 +953,40 @@ public:
                 }
                 file << "],\n";
 
-                file << "          \"quantum_time_sec\": " << std::fixed << std::setprecision(4) << q.quantum_time_sec << "\n";
+                file << "          \"quantum_time_sec\": " << std::fixed << std::setprecision(4) << q.quantum_time_sec << ",\n";
+                file << "          \"sampling_validation\": {\n";
+                file << "            \"num_sampling_seeds\": " << q.num_sampling_seeds << ",\n";
+                file << "            \"seeds\": [";
+                for (size_t si = 0; si < q.sample_seeds.size(); ++si) {
+                    file << (si > 0 ? ", " : "") << q.sample_seeds[si];
+                }
+                file << "],\n";
+                file << "            \"sample_success_rates\": [";
+                for (size_t si = 0; si < q.sample_success_rates.size(); ++si) {
+                    file << (si > 0 ? ", " : "") << std::scientific << std::setprecision(6) << q.sample_success_rates[si];
+                }
+                file << "],\n";
+                file << "            \"sample_improved_shots\": [";
+                for (size_t si = 0; si < q.sample_improved_shots.size(); ++si) {
+                    file << (si > 0 ? ", " : "") << q.sample_improved_shots[si];
+                }
+                file << "],\n";
+                file << "            \"sample_total_shots\": [";
+                for (size_t si = 0; si < q.sample_total_shots.size(); ++si) {
+                    file << (si > 0 ? ", " : "") << q.sample_total_shots[si];
+                }
+                file << "],\n";
+                file << "            \"sample_best_energies\": [";
+                for (size_t si = 0; si < q.sample_best_energies.size(); ++si) {
+                    file << (si > 0 ? ", " : "") << q.sample_best_energies[si];
+                }
+                file << "],\n";
+                file << "            \"sample_mean_hamming_flips\": [";
+                for (size_t si = 0; si < q.sample_mean_hamming_flips.size(); ++si) {
+                    file << (si > 0 ? ", " : "") << std::fixed << std::setprecision(4) << q.sample_mean_hamming_flips[si];
+                }
+                file << "]\n";
+                file << "          }\n";
                 file << "        }" << (gi + 1 < trap_list.size() ? "," : "") << "\n";
             }
             file << "      }\n";
@@ -721,11 +1001,11 @@ public:
         const std::vector<SingleTrapBenchmark>& results,
         std::ostream& os = std::cout) const
     {
-        os << "\n========================================================================================================================================\n";
-        os << "                                            BERNASCONI-KRYLOV BENCHMARK SUMMARY TABLE                                                   \n";
-        os << "========================================================================================================================================\n";
-        os << " N  |  g   | Trap (E0) | Window <P_<> | Best d* | Kick Rate r(d*) | Restart Rate | Quantum Time | Kick Time  | Restart Time\n";
-        os << "----+------+-----------+--------------+---------+-----------------+--------------+--------------+------------+-------------\n";
+        os << "\n========================================================================================================================================================\n";
+        os << "                                                    BERNASCONI-KRYLOV BENCHMARK SUMMARY TABLE                                                           \n";
+        os << "========================================================================================================================================================\n";
+        os << " N  |  g   | Trap (E0) | Window <P_<> | Best d* | Kick Rate r(d*) | Restart Rate | Tabu Best Rate (Method)      | Quantum Time | SD Time  | Tabu Time\n";
+        os << "----+------+-----------+--------------+---------+-----------------+--------------+------------------------------+--------------+----------+----------\n";
 
         // Group by (n, g)
         std::map<std::pair<int, double>, std::vector<SingleTrapBenchmark>> grouped;
@@ -741,23 +1021,32 @@ public:
             double sum_pless = 0.0;
             double sum_krate = 0.0;
             double sum_rrate = 0.0;
+            double sum_trate = 0.0;
             double sum_qtime = 0.0;
-            double sum_ktime = 0.0;
-            double sum_rtime = 0.0;
+            double sum_sdtime = 0.0;
+            double sum_ttime = 0.0;
 
             for (const auto& r : trap_list) {
                 sum_pless += r.window_avg_p_less;
                 sum_krate += r.best_d_rate;
                 sum_rrate += r.restart_rate;
+                sum_trate += r.tabu_best_rate;
                 sum_qtime += r.quantum_time_sec;
-                sum_ktime += r.kick_time_sec;
-                sum_rtime += r.restart_time_sec;
+                sum_sdtime += (r.kick_time_sec + r.restart_time_sec);
+                double t_time = r.tabu_direct_time_sec + r.tabu_kick_time_sec + r.tabu_restart_time_sec;
+                sum_ttime += t_time;
 
-                std::ostringstream ss_trap, ss_pless, ss_krate, ss_rrate;
+                std::ostringstream ss_trap, ss_pless, ss_krate, ss_rrate, ss_tabu;
                 ss_trap << "#" << r.trap_rank << " (" << r.trap_energy << ")";
                 ss_pless << std::scientific << std::setprecision(3) << r.window_avg_p_less;
                 ss_krate << std::scientific << std::setprecision(3) << r.best_d_rate;
                 ss_rrate << std::scientific << std::setprecision(3) << r.restart_rate;
+                if (r.tabu_enabled) {
+                    ss_tabu << std::scientific << std::setprecision(3) << r.tabu_best_rate;
+                    if (!r.tabu_best_method.empty()) ss_tabu << " (" << r.tabu_best_method << ")";
+                } else {
+                    ss_tabu << "N/A";
+                }
 
                 os << " " << std::setw(2) << r.n << " | "
                    << std::setw(4) << std::fixed << std::setprecision(2) << r.g << " | "
@@ -766,19 +1055,21 @@ public:
                    << std::setw(7) << r.best_d << " | "
                    << std::setw(15) << ss_krate.str() << " | "
                    << std::setw(12) << ss_rrate.str() << " | "
+                   << std::left << std::setw(28) << ss_tabu.str() << std::right << " | "
                    << std::setw(10) << std::fixed << std::setprecision(2) << r.quantum_time_sec << "s | "
-                   << std::setw(8) << std::fixed << std::setprecision(2) << r.kick_time_sec << "s | "
-                   << std::setw(9) << std::fixed << std::setprecision(2) << r.restart_time_sec << "s\n";
+                   << std::setw(7) << std::fixed << std::setprecision(2) << (r.kick_time_sec + r.restart_time_sec) << "s | "
+                   << std::setw(8) << std::fixed << std::setprecision(2) << t_time << "s\n";
             }
 
             if (trap_list.size() > 1) {
                 double count = static_cast<double>(trap_list.size());
-                std::ostringstream ss_mean_pless, ss_mean_krate, ss_mean_rrate;
+                std::ostringstream ss_mean_pless, ss_mean_krate, ss_mean_rrate, ss_mean_trate;
                 ss_mean_pless << std::scientific << std::setprecision(3) << (sum_pless / count);
                 ss_mean_krate << std::scientific << std::setprecision(3) << (sum_krate / count);
                 ss_mean_rrate << std::scientific << std::setprecision(3) << (sum_rrate / count);
+                ss_mean_trate << std::scientific << std::setprecision(3) << (sum_trate / count);
 
-                os << "----+------+-----------+--------------+---------+-----------------+--------------+--------------+------------+-------------\n";
+                os << "----+------+-----------+--------------+---------+-----------------+--------------+------------------------------+--------------+----------+----------\n";
                 os << " " << std::setw(2) << n << " | "
                    << std::setw(4) << std::fixed << std::setprecision(2) << g << " | "
                    << std::setw(9) << "MEAN" << " | "
@@ -786,13 +1077,14 @@ public:
                    << std::setw(7) << "---" << " | "
                    << std::setw(15) << ss_mean_krate.str() << " | "
                    << std::setw(12) << ss_mean_rrate.str() << " | "
+                   << std::left << std::setw(28) << ss_mean_trate.str() << std::right << " | "
                    << std::setw(10) << std::fixed << std::setprecision(2) << (sum_qtime / count) << "s | "
-                   << std::setw(8) << std::fixed << std::setprecision(2) << (sum_ktime / count) << "s | "
-                   << std::setw(9) << std::fixed << std::setprecision(2) << (sum_rtime / count) << "s\n";
-                os << "----+------+-----------+--------------+---------+-----------------+--------------+--------------+------------+-------------\n";
+                   << std::setw(7) << std::fixed << std::setprecision(2) << (sum_sdtime / count) << "s | "
+                   << std::setw(8) << std::fixed << std::setprecision(2) << (sum_ttime / count) << "s\n";
+                os << "----+------+-----------+--------------+---------+-----------------+--------------+------------------------------+--------------+----------+----------\n";
             }
         }
-        os << "========================================================================================================================================\n\n";
+        os << "========================================================================================================================================================\n\n";
     }
 
     // ------------------------------------------------------------------------
@@ -832,8 +1124,19 @@ public:
                 base_bench.trap_energy = trap_fam.energy;
                 base_bench.d_min = eval.compute_d_min(base_bench.trap_state, base_bench.trap_energy);
 
+                std::stringstream ss_hex;
+                ss_hex << "0x" << std::hex << std::uppercase << trap_fam.canonical_state.bits;
+                base_bench.canonical_hex = ss_hex.str();
+                base_bench.canonical_id = ss_hex.str();
+                std::string bitstr(n, '0');
+                for (int b = 0; b < n; ++b) {
+                    if (trap_fam.canonical_state.get_bit(b)) bitstr[n - 1 - b] = '1';
+                }
+                base_bench.canonical_bitstring = bitstr;
+
                 bool should_run_classical = cfg.quantum.run_classical && 
-                    (cfg.classical.kick_trials_per_d > 0 || cfg.classical.restart_trials > 0);
+                    (cfg.classical.kick_trials_per_d > 0 || cfg.classical.restart_trials > 0 ||
+                     (cfg.classical.enable_tabu && cfg.classical.tabu_trials > 0));
 
                 if (should_run_classical) {
                     if (cfg.output.verbose) {

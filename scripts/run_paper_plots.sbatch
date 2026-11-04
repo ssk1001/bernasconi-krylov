@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=paper_plots
-#SBATCH --partition=gpu_h200_8
+#SBATCH --partition=gpu_h100_4
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=1
 #SBATCH --time=00:15:00
 #SBATCH --output=slurm_%x_%j.out
 #SBATCH --error=slurm_%x_%j.err
@@ -16,7 +16,7 @@ cd "${SLURM_SUBMIT_DIR}"
 source scripts/setup_env.sh cuquantum_env
 
 # 2. Ensure directories exist
-mkdir -p figures/paper data_processed
+mkdir -p figures/paper data_processed tables
 
 # 3. Generate all 4 publication figures and plot_data_summary.json
 echo "--- Generating All 4 Publication Figures ---"
