@@ -16,6 +16,14 @@ source "${SCRIPT_DIR}/setup_env.sh" "${1:-cuquantum_env}"
 
 cd "${ROOT_DIR}"
 
+# Purge stale CMakeCache if it was poisoned by a previous failed check
+if [ -f "build/CMakeCache.txt" ]; then
+    if grep -qE "CUDA_COMPILER-NOTFOUND|CUSTATEVEC_LIB-NOTFOUND" build/CMakeCache.txt 2>/dev/null; then
+        echo "[BUILD] Purging stale CMakeCache.txt containing NOTFOUND entries..."
+        rm -f build/CMakeCache.txt
+    fi
+fi
+
 CUDA_ARCH="${CUDA_ARCH:-90}"
 echo ""
 echo "[BUILD] Configuring CMake for GPU architecture (sm_${CUDA_ARCH})..."
@@ -25,6 +33,17 @@ CMAKE_ARGS=(
     -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCH}"
     -DREQUIRE_CUDA=ON
 )
+
+if command -v nvcc &> /dev/null; then
+    NVCC_BIN="$(which nvcc)"
+    echo "[BUILD] Explicit CUDA compiler: ${NVCC_BIN}"
+    CMAKE_ARGS+=( -DCMAKE_CUDA_COMPILER="${NVCC_BIN}" )
+fi
+if command -v gcc &> /dev/null; then
+    GCC_BIN="$(which gcc)"
+    CMAKE_ARGS+=( -DCMAKE_CUDA_HOST_COMPILER="${GCC_BIN}" )
+fi
+
 if [ -n "${CONDA_PREFIX}" ]; then
     CMAKE_ARGS+=(
         -DCUQUANTUM_ROOT="${CONDA_PREFIX}"
