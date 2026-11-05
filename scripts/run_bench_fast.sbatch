@@ -9,11 +9,13 @@
 #SBATCH --output=slurm_%x_%j.out
 #SBATCH --error=slurm_%x_%j.err
 
+set -e
+
 echo "=== Starting Grouped Fast Benchmark (N = 20, 22, 24, 26) on $(hostname) at $(date) ==="
 echo "--- GPU Allocation ---"
 nvidia-smi
 
-cd "${SLURM_SUBMIT_DIR}"
+cd "${SLURM_SUBMIT_DIR:-.}"
 
 # 1. Environment setup (Spack modules + Conda)
 source scripts/setup_env.sh cuquantum_env
@@ -25,6 +27,11 @@ mkdir -p data_processed seeds
 if [ ! -f "build/run_benchmark" ]; then
     echo "[BUILD] build/run_benchmark not found. Building now..."
     bash scripts/build.sh cuquantum_env
+fi
+
+if [ ! -f "build/run_benchmark" ]; then
+    echo "[FATAL ERROR] 'build/run_benchmark' does not exist! Compilation failed or was skipped."
+    exit 1
 fi
 
 FAST_N=(20 22 24 26)

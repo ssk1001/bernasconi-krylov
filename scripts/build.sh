@@ -23,6 +23,7 @@ CMAKE_ARGS=(
     -B build
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCH}"
+    -DREQUIRE_CUDA=ON
 )
 if [ -n "${CONDA_PREFIX}" ]; then
     CMAKE_ARGS+=(
@@ -43,11 +44,17 @@ echo "[BUILD] Compiling binaries with ${NUM_JOBS} threads..."
 cmake --build build -j"${NUM_JOBS}"
 
 echo ""
+if [ ! -f "${ROOT_DIR}/build/run_benchmark" ]; then
+    echo "======================================================================"
+    echo "[FATAL ERROR] 'build/run_benchmark' was not generated!"
+    echo "Check the CMake log above: verify nvcc is in PATH and cuQuantum is installed."
+    echo "======================================================================"
+    exit 1
+fi
+
 echo "======================================================================"
 echo "[SUCCESS] Build complete! Binaries located in: ${ROOT_DIR}/build"
-if [ -f "${ROOT_DIR}/build/run_benchmark" ]; then
-    echo "  - ${ROOT_DIR}/build/run_benchmark (GPU Benchmark Pipeline)"
-fi
+echo "  - ${ROOT_DIR}/build/run_benchmark (GPU Benchmark Pipeline)"
 if [ -f "${ROOT_DIR}/build/compute_d_min_cli" ]; then
     echo "  - ${ROOT_DIR}/build/compute_d_min_cli"
 fi

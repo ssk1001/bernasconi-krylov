@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 include(CheckLanguage)
 check_language(CUDA)
 
+option(REQUIRE_CUDA "Enforce CUDA and cuQuantum dependencies (fail instead of falling back to CPU)" OFF)
+
 if(CMAKE_CUDA_COMPILER)
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
         set(CMAKE_CUDA_ARCHITECTURES "native")
@@ -11,6 +13,9 @@ if(CMAKE_CUDA_COMPILER)
     project(FixedG_Subspace_Solver LANGUAGES CXX CUDA)
     set(ENABLE_CUDA TRUE)
 else()
+    if(REQUIRE_CUDA)
+        message(FATAL_ERROR "[CMake] REQUIRE_CUDA=ON, but CUDA compiler (nvcc) was not found in PATH or environment! Load CUDA module before building.")
+    endif()
     project(FixedG_Subspace_Solver LANGUAGES CXX)
     set(ENABLE_CUDA FALSE)
     message(STATUS "[CMake] CUDA compiler (nvcc) not found. Configuring CPU-only tools and unit tests.")
@@ -49,15 +54,23 @@ if(ENABLE_CUDA)
                 $ENV{CUQUANTUM_ROOT}/lib
                 ${CUQUANTUM_ROOT}
                 $ENV{CUQUANTUM_ROOT}
+                ${CONDA_PREFIX}/lib
+                $ENV{CONDA_PREFIX}/lib
                 /usr/local/cuquantum/lib
+                /usr/local/cuda/lib64
             PATH_SUFFIXES
                 lib
                 lib64
                 cuquantum/lib
+                python3/site-packages/cuquantum/lib
+                python3/site-packages/custatevec/lib
+                python3/dist-packages/cuquantum/lib
+                python3/dist-packages/custatevec/lib
         )
     endif()
 
     if(CUSTATEVEC_LIB)
+        message(STATUS "[CMake] Found custatevec: ${CUSTATEVEC_LIB}")
         add_executable(run_benchmark 
             src/run_benchmark.cu
         )
@@ -77,6 +90,11 @@ if(ENABLE_CUDA)
         elseif(DEFINED CUQUANTUM_ROOT)
             target_include_directories(run_benchmark PRIVATE ${CUQUANTUM_ROOT}/include ${CUQUANTUM_ROOT})
         endif()
+        if(DEFINED ENV{CONDA_PREFIX})
+            target_include_directories(run_benchmark PRIVATE $ENV{CONDA_PREFIX}/include)
+        elseif(DEFINED CONDA_PREFIX)
+            target_include_directories(run_benchmark PRIVATE ${CONDA_PREFIX}/include)
+        endif()
         if(DEFINED CUQUANTUM_INCLUDE_DIR)
             target_include_directories(run_benchmark PRIVATE ${CUQUANTUM_INCLUDE_DIR})
         endif()
@@ -91,7 +109,11 @@ if(ENABLE_CUDA)
             target_link_options(run_benchmark PRIVATE "-Wl,-rpath-link,/usr/local/cuda/lib64")
         endif()
     else()
-        message(WARNING "[CMake] custatevec library not found. 'run_benchmark' will not be built.")
+        if(REQUIRE_CUDA)
+            message(FATAL_ERROR "[CMake] REQUIRE_CUDA=ON, but custatevec library was not found! Set CUQUANTUM_ROOT or activate conda environment with cuquantum.")
+        else()
+            message(WARNING "[CMake] custatevec library not found. 'run_benchmark' will not be built.")
+        endif()
     endif()
 endif()
 
