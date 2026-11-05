@@ -18,18 +18,43 @@ echo "======================================================================"
 echo "          Setting up Bernasconi-Krylov HPC Environment"
 echo "======================================================================"
 
-# 1. Load Spack Environment Modules
-if command -v module &> /dev/null; then
-    echo "[MODULES] Purging existing modules..."
-    module purge 2> /dev/null || true
+# 1. Load Spack / Environment Modules
+if ! command -v nvcc &> /dev/null; then
+    if command -v module &> /dev/null; then
+        echo "[MODULES] Loading GCC..."
+        module load gcc-11.2.0-gcc-8.5.0-ov3qrz6 2>/dev/null || module load gcc/11.2.0 2>/dev/null || module load gcc 2>/dev/null || true
 
-    echo "[MODULES] Loading GCC..."
-    module load gcc-11.2.0-gcc-8.5.0-ov3qrz6 2>/dev/null || module load gcc/11.2.0 2>/dev/null || module load gcc 2>/dev/null || true
-
-    echo "[MODULES] Loading CUDA..."
-    module load cuda-12.1.0-gcc-11.2.0-s5o57xp 2>/dev/null || module load cuda/12.1 2>/dev/null || module load cuda 2>/dev/null || true
+        echo "[MODULES] Loading CUDA..."
+        module load cuda-12.1.0-gcc-11.2.0-s5o57xp 2>/dev/null || module load cuda/12.1 2>/dev/null || module load cuda-12.1 2>/dev/null || module load cuda/12.2 2>/dev/null || module load cuda/12.0 2>/dev/null || module load cuda 2>/dev/null || module load cudatoolkit 2>/dev/null || true
+    fi
 else
-    echo "[WARN] 'module' command not found. Skipping module load."
+    echo "[CUDA] Existing nvcc detected in PATH: $(which nvcc)"
+fi
+
+# Fallback: scan standard CUDA install locations if nvcc is still not in PATH
+if ! command -v nvcc &> /dev/null; then
+    for candidate_cuda in \
+        "${CUDA_HOME}" \
+        "${CUDA_PATH}" \
+        "${CUDA_ROOT}" \
+        "/usr/local/cuda" \
+        "/usr/local/cuda-12.1" \
+        "/usr/local/cuda-12.2" \
+        "/usr/local/cuda-12.0" \
+        "/usr/local/cuda-12" \
+        "/usr/local/cuda-11.8" \
+        "/apps/cuda" \
+        "/opt/cuda" \
+        "${CONDA_PREFIX}"; do
+        if [ -n "${candidate_cuda}" ] && [ -x "${candidate_cuda}/bin/nvcc" ]; then
+            echo "[CUDA] Discovered nvcc at: ${candidate_cuda}/bin/nvcc"
+            export CUDA_HOME="${candidate_cuda}"
+            export CUDA_PATH="${candidate_cuda}"
+            export PATH="${candidate_cuda}/bin:${PATH}"
+            export LD_LIBRARY_PATH="${candidate_cuda}/lib64:${candidate_cuda}/lib:${LD_LIBRARY_PATH}"
+            break
+        fi
+    done
 fi
 
 # 2. Activate Conda Environment (for cuQuantum, Eigen, Python)
