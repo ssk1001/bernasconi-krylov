@@ -22,7 +22,11 @@ echo "        Submitting Bernasconi-Krylov Grouped Benchmarks (2 Jobs)      "
 echo "======================================================================"
 echo "  Fast Partition  (N=20,22,24,26)    : ${PART_FAST}"
 echo "  Heavy Partition (N=28,30)          : ${PART_HEAVY}"
-echo "======================================================================"
+# Ensure executable is built before submitting parallel batch jobs
+if [ ! -f "build/run_benchmark" ]; then
+    echo "[BUILD] build/run_benchmark not found. Building now before submitting..."
+    bash scripts/build.sh cuquantum_env
+fi
 
 JOB_IDS=()
 

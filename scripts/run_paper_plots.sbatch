@@ -4,13 +4,16 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
+#SBATCH --gres=gpu:1
 #SBATCH --time=00:15:00
 #SBATCH --output=slurm_%x_%j.out
 #SBATCH --error=slurm_%x_%j.err
 
+set -e
+
 echo "=== Starting Job: ${SLURM_JOB_NAME} (ID: ${SLURM_JOB_ID}) on $(hostname) at $(date) ==="
 
-cd "${SLURM_SUBMIT_DIR}"
+cd "${SLURM_SUBMIT_DIR:-.}"
 
 # 1. Environment setup (Spack modules + Conda)
 source scripts/setup_env.sh cuquantum_env
