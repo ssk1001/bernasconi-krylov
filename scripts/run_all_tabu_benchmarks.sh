@@ -11,13 +11,13 @@ cd "${ROOT_DIR}"
 
 TRIALS=${1:-50000}
 KICK_D="2,4,6,8,10"
-MAX_RANKS=10
+MAX_RANKS=0 # 0 = evaluate all seeds in bottom 2 energy levels
 
 echo "======================================================================"
 echo " Starting Tabu Search Benchmarking Suite across N in [20, 22, 24, 26, 28, 30]"
 echo " Trials per configuration : ${TRIALS}"
 echo " Kick distances           : ${KICK_D}"
-echo " Benchmark ranks per N    : ${MAX_RANKS}"
+echo " Benchmark ranks per N    : All seeds in lowest 2 energy ranks (MAX_RANKS=${MAX_RANKS})"
 echo "======================================================================"
 
 mkdir -p data_processed

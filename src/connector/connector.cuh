@@ -256,26 +256,6 @@ public:
                     verbose ? LogLevel::Summary : LogLevel::Silent
                 );
             }
-
-            std::string seeds_dir = resolve_seeds_dir(traps_cfg.minima_cache_dir);
-            try {
-                std::filesystem::create_directories(seeds_dir);
-            } catch (...) {}
-
-            std::string save_path = (std::filesystem::path(seeds_dir) /
-                                     ("seeds_N" + std::to_string(n) + ".csv")).string();
-
-            ClassicalRunMetadata meta;
-            meta.n = n;
-            meta.seed = seed;
-            meta.algorithm_name = "Minima Discovery";
-            meta.total_starts = families.size();
-            meta.total_evals = 0;
-            meta.device_name = use_gpu ? "GPU" : "CPU";
-            ClassicalLogger::export_to_csv(save_path, families, meta);
-            if (verbose) {
-                std::cout << "[Connector] Exported discovered minima to: " << save_path << "\n";
-            }
         }
 
         // Filter out global optima (E_0 <= E*(N)) so only true metastable traps (E_0 > E*(N)) are benchmarked
@@ -342,6 +322,29 @@ public:
                               << (r + 1 < unique_energies.size() ? ", " : "");
                 }
                 std::cout << ").\n";
+            }
+        }
+
+        // If minima were freshly discovered, export the filtered 2-rank seeds to disk cache
+        if (!cache_loaded && !families.empty()) {
+            std::string seeds_dir = resolve_seeds_dir(traps_cfg.minima_cache_dir);
+            try {
+                std::filesystem::create_directories(seeds_dir);
+            } catch (...) {}
+
+            std::string save_path = (std::filesystem::path(seeds_dir) /
+                                     ("seeds_N" + std::to_string(n) + ".csv")).string();
+
+            ClassicalRunMetadata meta;
+            meta.n = n;
+            meta.seed = seed;
+            meta.algorithm_name = "Minima Discovery (Bottom " + std::to_string(traps_cfg.max_energy_ranks) + " Ranks)";
+            meta.total_starts = families.size();
+            meta.total_evals = 0;
+            meta.device_name = use_gpu ? "GPU" : "CPU";
+            ClassicalLogger::export_to_csv(save_path, families, meta);
+            if (verbose) {
+                std::cout << "[Connector] Exported filtered minima (" << families.size() << " seeds) to: " << save_path << "\n";
             }
         }
 

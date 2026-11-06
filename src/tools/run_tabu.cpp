@@ -30,7 +30,7 @@ struct CliArgs {
     std::string seeds_file = "";
     int rank = 1;
     bool all_ranks = false;
-    size_t max_ranks = 10;
+    size_t max_ranks = 0; // 0 = all traps in the 2 energy ranks
     std::vector<int> kick_d = {2, 4, 6, 8};
     int fixed_tenure = 0;
     bool compare_sd = true;
@@ -47,7 +47,7 @@ void print_usage(const char* prog) {
               << "  --seeds-file <file> Path to CSV file containing minima seeds\n"
               << "  --rank <int>        Trap rank to benchmark (1 = deepest trap, default: 1)\n"
               << "  --all-ranks         Benchmark all available top ranks (up to --max-ranks)\n"
-              << "  --max-ranks <int>   Maximum ranks to benchmark with --all-ranks (default: 10)\n"
+              << "  --max-ranks <int>   Maximum ranks to benchmark with --all-ranks (default: 0 = all seeds in 2 ranks)\n"
               << "  --kick-d <list>     Comma-separated list of kick distances d (default: 2,4,6,8)\n"
               << "  --tenure <int>      Fixed tabu tenure (default: 0 = dynamic randomized tenure)\n"
               << "  --no-compare-sd     Disable comparison with Steepest Descent baselines\n"
@@ -249,10 +249,38 @@ std::vector<BenchmarkTrap> load_benchmark_traps(int n, const std::string& seed_p
                 bt.state = t.sample_state.bits ? t.sample_state : t.canonical_state;
                 bt.d_min = eval.compute_d_min(bt.state, bt.energy);
                 bt.source = save_path;
-                traps.push_back(bt);
             }
         }
     }
+
+    // Enforce energy rank filtering: keep only the lowest 2 energy levels strictly above global minimum
+    if (!traps.empty()) {
+        std::sort(traps.begin(), traps.end(), [](const BenchmarkTrap& a, const BenchmarkTrap& b) {
+            if (a.energy != b.energy) return a.energy < b.energy;
+            return a.state.bits < b.state.bits;
+        });
+
+        std::vector<int64_t> unique_e;
+        for (const auto& t : traps) {
+            if (unique_e.empty() || unique_e.back() != t.energy) {
+                unique_e.push_back(t.energy);
+            }
+        }
+
+        if (unique_e.size() > 2) {
+            int64_t cutoff = unique_e[1]; // Rank 2 energy cutoff
+            traps.erase(
+                std::remove_if(traps.begin(), traps.end(),
+                               [cutoff](const BenchmarkTrap& t) { return t.energy > cutoff; }),
+                traps.end()
+            );
+        }
+
+        for (size_t i = 0; i < traps.size(); ++i) {
+            traps[i].rank = static_cast<int>(i + 1);
+        }
+    }
+
     return traps;
 }
 
@@ -280,7 +308,7 @@ int main(int argc, char* argv[]) {
     // Select traps to benchmark
     std::vector<BenchmarkTrap> target_traps;
     if (args.all_ranks) {
-        size_t count = std::min(args.max_ranks, traps.size());
+        size_t count = (args.max_ranks == 0) ? traps.size() : std::min(args.max_ranks, traps.size());
         for (size_t i = 0; i < count; ++i) target_traps.push_back(traps[i]);
     } else {
         bool found = false;
