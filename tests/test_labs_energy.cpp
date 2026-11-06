@@ -80,6 +80,7 @@ void test_ck_sum_consistency() {
                 sum_squares += ck[k] * ck[k];
             }
 
+            (void)energy;
             assert(energy == sum_squares);
         }
     }
@@ -101,10 +102,13 @@ void test_symmetry_energy_invariance() {
 
             int64_t e_orig = eval.calcEnergy(s);
             int64_t e_canon = eval.calcEnergy(c);
+            (void)e_orig;
+            (void)e_canon;
             assert(e_orig == e_canon);
 
             // Canonical must be idempotent: canonical(canonical(s)) == canonical(s)
             SpinState c2 = eval.get_canonical(c);
+            (void)c2;
             assert(c == c2);
         }
     }
@@ -130,6 +134,7 @@ void test_spin_state_operations() {
 
     // Out-of-place flip
     SpinState s2 = s.flipped(5);
+    (void)s2;
     assert(s2.get_bit(3) && s2.get_bit(5));
     assert(!s.get_bit(5));
 
@@ -140,6 +145,7 @@ void test_spin_state_operations() {
 
     // Hasher consistency
     SpinStateHash hasher;
+    (void)hasher;
     assert(hasher(s) == hasher(SpinState(s.bits)));
     assert(s == SpinState(s.bits));
 

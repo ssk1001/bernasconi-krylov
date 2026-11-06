@@ -58,6 +58,7 @@ int main() {
     assert(results.size() == 2);
 
     for (const auto& r : results) {
+        (void)r;
         assert(r.n == 6);
         assert(r.g == 0.5);
         assert(r.best_d == 1 || r.best_d == 2);
@@ -114,6 +115,7 @@ int main() {
     assert(traj_results.size() == 4); // 2 traps * 2 g values
 
     for (const auto& r : traj_results) {
+        (void)r;
         assert(r.time_points.size() == 41); // t = 0.0 to 2.0 with dt = 0.05 (41 points)
         assert(r.p_less_history.size() == 41);
         assert(r.p_blind >= 0.0);
@@ -138,6 +140,7 @@ int main() {
     int py_check = std::system("python3 -c 'import pandas, matplotlib' > /dev/null 2>&1");
     if (py_check == 0) {
         int plot_ret = std::system("python3 scripts/plot_probability_dynamics.py data_raw/test_traj_out/dynamics_n6.csv figures/test_n6 > /dev/null 2>&1");
+        (void)plot_ret;
         assert(plot_ret == 0);
         assert(std::filesystem::exists("figures/test_n6/prob_dynamics_all_2_traps_grid.png"));
         std::cout << "  --> PASSED: Overview grid and individual plots successfully generated!\n";

@@ -500,6 +500,7 @@ public:
 
         double next_sample_time = config.t_start;
         double traj_interval = (config.dt_trajectory > 0.0) ? config.dt_trajectory : config.dt;
+        double next_traj_time = 0.0;
         double sample_end_time = (config.num_sample_points > 1 && config.dt_sample > 0.0)
             ? (config.t_start + (config.num_sample_points - 1) * config.dt_sample)
             : config.t_max;

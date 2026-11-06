@@ -107,6 +107,7 @@ inline bool is_one_flip_local_minimum(uint64_t s, int n, const uint64_t* masks, 
 }
 
 ExhaustiveResult run_exploration(int n, int num_threads = 0, bool run_sd = false, size_t num_sd_starts = 100000) {
+    (void)num_threads;
     ExhaustiveResult result;
     result.n = n;
 
@@ -276,7 +277,6 @@ bool load_from_json(const std::string& filepath, ExhaustiveResult& res) {
     LevelInfo cur_lvl;
     bool in_level = false;
     OrbitInfo cur_orb;
-    bool in_orbit = false;
 
     res.levels.clear();
 
@@ -296,7 +296,6 @@ bool load_from_json(const std::string& filepath, ExhaustiveResult& res) {
             auto pos = line.find(":");
             cur_lvl.energy = std::stoll(line.substr(pos + 1));
         } else if (line.find("\"canonical_id\":") != std::string::npos) {
-            in_orbit = true;
             auto first = line.find("\"0x");
             if (first == std::string::npos) first = line.find("\"0X");
             auto last = line.find("\"", first + 1);
@@ -318,7 +317,6 @@ bool load_from_json(const std::string& filepath, ExhaustiveResult& res) {
             cur_orb.energy = cur_lvl.energy;
             cur_lvl.orbits.push_back(cur_orb);
             cur_orb = OrbitInfo{};
-            in_orbit = false;
         }
     }
     if (in_level && !cur_lvl.orbits.empty()) {

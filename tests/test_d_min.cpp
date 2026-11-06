@@ -35,6 +35,8 @@ int main() {
             }
 
             int actual_d_min = eval.compute_d_min(s0, e0);
+            (void)actual_d_min;
+            (void)expected_d_min;
             assert(actual_d_min == expected_d_min);
         }
         std::cout << "  --> PASSED: Verified all 2^6 = 64 states against exhaustive search!\n";
@@ -65,6 +67,8 @@ int main() {
             }
 
             int actual_d_min = eval.compute_d_min(s0, e0);
+            (void)actual_d_min;
+            (void)expected_d_min;
             assert(actual_d_min == expected_d_min);
         }
         std::cout << "  --> PASSED: Verified N=10 sampled states against exhaustive search!\n";

@@ -23,6 +23,7 @@ void test_incremental_energy_correctness() {
     for (int trial = 0; trial < 20; ++trial) {
         SpinState start = tabu.random_state(rng);
         TabuTrialResult res = tabu.search_trajectory(start, -1, cfg, rng);
+        (void)res;
 
         // Verify start and final energies match full recalculations
         assert(res.start_energy == eval.calcEnergy(res.start_state));
@@ -45,11 +46,13 @@ void test_trap_escape() {
     // Trap for N=16 with energy E0 = 28 (verified local minimum from seeds_N16.csv, ground state is 24)
     SpinState trap(0xEED); // Known local minimum for N=16
     int64_t e_trap = eval.calcEnergy(trap);
+    (void)e_trap;
     assert(e_trap == 28);
 
     // Verify it is indeed a local minimum (all 1-flip neighbors have E >= e_trap)
     for (int p = 0; p < n; ++p) {
         SpinState nbr = trap.flipped(p);
+        (void)nbr;
         assert(eval.calcEnergy(nbr) >= e_trap);
     }
 
@@ -84,6 +87,7 @@ void test_50000_trials_benchmark() {
     LabsEvaluator eval(n);
     SpinState trap(0xEED); // Known local minimum for N=16 (E0 = 28)
     int64_t e_trap = eval.calcEnergy(trap);
+    (void)e_trap;
     assert(e_trap == 28);
 
     TabuConfig cfg;
