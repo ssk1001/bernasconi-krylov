@@ -90,6 +90,7 @@ struct SystemConfig {
 struct TrapsConfig {
     size_t pool_minima_count = 100;
     size_t benchmark_trap_count = 5;
+    size_t max_energy_ranks = 2; // Keep lowest 2 energy levels strictly above global minimum
     std::string minima_cache_dir = "seeds";
     bool force_regenerate_traps = false;
 };
@@ -299,6 +300,8 @@ struct BenchmarkConfig {
             traps.pool_minima_count = std::stoul(val);
         } else if (key == "benchmark_trap_count" || key == "top_minima_count" || key == "num_traps") {
             traps.benchmark_trap_count = std::stoul(val);
+        } else if (key == "max_energy_ranks" || key == "max_ranks" || key == "energy_ranks" || key == "num_ranks") {
+            traps.max_energy_ranks = std::stoul(val);
         } else if (key == "minima_cache_dir" || key == "seeds_dir" || key == "seed_dir") {
             traps.minima_cache_dir = val;
         } else if (key == "force_regenerate_traps" || key == "force_regenerate_seeds" || key == "regenerate_seeds") {
@@ -401,6 +404,7 @@ struct BenchmarkConfig {
         os << "[Traps]\n";
         os << "  Pool Minima Count        : " << traps.pool_minima_count << "\n";
         os << "  Benchmark Trap Count     : " << traps.benchmark_trap_count << "\n";
+        os << "  Max Energy Ranks         : " << traps.max_energy_ranks << " (lowest levels strictly above E*)\n";
         os << "  Minima Cache Dir         : " << traps.minima_cache_dir << "\n";
         os << "  Force Regenerate         : " << (traps.force_regenerate_traps ? "true" : "false") << "\n";
 
@@ -454,6 +458,7 @@ struct BenchmarkConfig {
         ss << "[traps]\n";
         ss << "pool_minima_count = " << traps.pool_minima_count << "\n";
         ss << "benchmark_trap_count = " << traps.benchmark_trap_count << "\n";
+        ss << "max_energy_ranks = " << traps.max_energy_ranks << "\n";
         ss << "minima_cache_dir = " << traps.minima_cache_dir << "\n";
         ss << "force_regenerate_traps = " << (traps.force_regenerate_traps ? "true" : "false") << "\n\n";
 

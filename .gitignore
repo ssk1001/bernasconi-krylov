@@ -80,8 +80,10 @@ core
 core.*
 *.log
 
-# Cached steepest descent seeds
-seeds/
+# Track curated steepest descent and exhaustive minima seeds
+!seeds/
+!seeds/*.csv
+!seeds/legacy_seeds_backup/*.csv
 
 # LaTeX build artifacts
 *.aux

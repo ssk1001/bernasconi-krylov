@@ -300,6 +300,51 @@ public:
             return a.canonical_state.bits < b.canonical_state.bits;
         });
 
+        // Enforce energy rank filtering: keep only the lowest max_energy_ranks energy levels strictly above global minimum
+        if (traps_cfg.max_energy_ranks > 0 && !families.empty()) {
+            std::vector<int64_t> unique_energies;
+            for (const auto& f : families) {
+                if (unique_energies.empty() || unique_energies.back() != f.energy) {
+                    unique_energies.push_back(f.energy);
+                }
+            }
+
+            if (unique_energies.size() > traps_cfg.max_energy_ranks) {
+                int64_t cutoff_energy = unique_energies[traps_cfg.max_energy_ranks - 1];
+                size_t original_count = families.size();
+                families.erase(
+                    std::remove_if(families.begin(), families.end(),
+                                   [cutoff_energy](const MinimumFamily& f) { return f.energy > cutoff_energy; }),
+                    families.end()
+                );
+                if (verbose) {
+                    std::cout << "[Connector] Filtered to first " << traps_cfg.max_energy_ranks
+                              << " energy ranks above E* (cutoff E_0 <= " << cutoff_energy << "): "
+                              << families.size() << " of " << original_count << " seeds retained across "
+                              << traps_cfg.max_energy_ranks << " energy tiers (";
+                    for (size_t r = 0; r < traps_cfg.max_energy_ranks; ++r) {
+                        int64_t e_val = unique_energies[r];
+                        size_t e_cnt = std::count_if(families.begin(), families.end(),
+                                                     [e_val](const MinimumFamily& f) { return f.energy == e_val; });
+                        std::cout << "Rank " << (r + 1) << " [E=" << e_val << "]: " << e_cnt << " seeds"
+                                  << (r + 1 < traps_cfg.max_energy_ranks ? ", " : "");
+                    }
+                    std::cout << ").\n";
+                }
+            } else if (verbose) {
+                std::cout << "[Connector] Retained all " << families.size() << " seeds across "
+                          << unique_energies.size() << " energy ranks above E* (";
+                for (size_t r = 0; r < unique_energies.size(); ++r) {
+                    int64_t e_val = unique_energies[r];
+                    size_t e_cnt = std::count_if(families.begin(), families.end(),
+                                                 [e_val](const MinimumFamily& f) { return f.energy == e_val; });
+                    std::cout << "Rank " << (r + 1) << " [E=" << e_val << "]: " << e_cnt << " seeds"
+                              << (r + 1 < unique_energies.size() ? ", " : "");
+                }
+                std::cout << ").\n";
+            }
+        }
+
         size_t take_count = (traps_cfg.benchmark_trap_count == 0)
             ? families.size()
             : std::min(traps_cfg.benchmark_trap_count, families.size());

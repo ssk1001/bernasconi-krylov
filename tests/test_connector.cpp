@@ -243,9 +243,9 @@ int main() {
 
     // Subtest 8.1: First call -> File absent, triggers discovery and creates seeds_N8.csv
     auto auto_traps_run1 = connector.prepare_traps(8, auto_cfg, 12345, false, true);
-    assert(auto_traps_run1.size() == 3);
-    assert(auto_traps_run1[0].energy <= auto_traps_run1[1].energy);
-    assert(auto_traps_run1[1].energy <= auto_traps_run1[2].energy);
+    // E*(8) = 8, so the two E=8 global optima are filtered out, leaving the E=12 metastable trap
+    assert(auto_traps_run1.size() == 1);
+    assert(auto_traps_run1[0].energy == 12);
 
     std::string expected_seed_path = auto_seed_dir + "/seeds_N8.csv";
     assert(std::filesystem::exists(expected_seed_path));
@@ -253,11 +253,9 @@ int main() {
 
     // Subtest 8.2: Second call -> File present, loads from cache without discovery
     auto auto_traps_run2 = connector.prepare_traps(8, auto_cfg, 12345, false, true);
-    assert(auto_traps_run2.size() == 3);
-    for (size_t i = 0; i < 3; ++i) {
-        assert(auto_traps_run1[i].canonical_state == auto_traps_run2[i].canonical_state);
-        assert(auto_traps_run1[i].energy == auto_traps_run2[i].energy);
-    }
+    assert(auto_traps_run2.size() == 1);
+    assert(auto_traps_run1[0].canonical_state == auto_traps_run2[0].canonical_state);
+    assert(auto_traps_run1[0].energy == auto_traps_run2[0].energy);
     std::cout << "  --> Successfully hit cache and reloaded identical seeds!\n";
 
     // Subtest 8.3: Directory search fallback test (discovers data_raw/minima/minima_n16.csv)

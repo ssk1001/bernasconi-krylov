@@ -1,0 +1,4 @@
+# N=24,Seed=42,TotalStarts=100000,TotalEvals=0,ElapsedMs=0,Device=Host CPU (Exhaustive Minima)
+id,energy,times_visited,basin_fraction,evals_to_first_find,canonical_hex,sample_hex,canonical_bitstring
+1,44,52,0.000520,0,0x5D2C6,0x5D2C6,000001011101001011000110
+2,48,74,0.000740,0,0x38C95,0x38C95,000000111000110010010101
