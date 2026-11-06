@@ -500,7 +500,10 @@ public:
 
         double next_sample_time = config.t_start;
         double traj_interval = (config.dt_trajectory > 0.0) ? config.dt_trajectory : config.dt;
-        double next_traj_time = 0.0;
+        double sample_end_time = (config.num_sample_points > 1 && config.dt_sample > 0.0)
+            ? (config.t_start + (config.num_sample_points - 1) * config.dt_sample)
+            : config.t_max;
+        int sample_points_taken = 0;
 
         for (int step = 0; step <= total_trotter_steps; ++step) {
             double current_t = step * config.dt;
@@ -552,9 +555,11 @@ public:
                 }
             }
 
-            // Bitstring projective sampling (if shots > 0)
+            // Bitstring projective sampling (if shots > 0): strictly over [t_start, sample_end_time]
             if (config.shots_per_point > 0 && current_t >= config.t_start - 1e-9 &&
-                current_t >= next_sample_time - 1e-9 && next_sample_time <= config.t_max + 1e-9) {
+                current_t >= next_sample_time - 1e-9 && next_sample_time <= sample_end_time + 1e-9 &&
+                (config.num_sample_points <= 0 || sample_points_taken < config.num_sample_points)) {
+                sample_points_taken++;
                 CHECK_CUSTATEVEC(custatevecSamplerPreprocess(
                     handle, sampler_desc, d_workspace, workspace_size));
 
