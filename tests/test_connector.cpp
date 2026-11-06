@@ -264,6 +264,43 @@ int main() {
     assert(found_minima_n16.find("minima_n16.csv") != std::string::npos);
     std::cout << "  --> Fallback path resolver found: " << found_minima_n16 << "\n";
 
+    // Subtest 8.4: Exhaustive search JSON parsing and fallback test
+    std::string ex_path = BenchmarkConnector::find_exhaustive_json(24);
+    assert(!ex_path.empty());
+    auto ex_families = BenchmarkConnector::load_from_exhaustive_json(ex_path, 24, 2);
+    assert(ex_families.size() == 2);
+    assert(ex_families[0].energy == 44);
+    assert(ex_families[1].energy == 48);
+    assert(ex_families[0].canonical_state.bits == 0x5D2C6);
+    assert(ex_families[1].canonical_state.bits == 0x38C95);
+    std::cout << "  --> Exhaustive JSON parsing for N=24: PASSED\n";
+
+    // End-to-end fallback when CSV is completely missing
+    std::string test_json_path = "data_processed/exhaustive_minima_n99.json";
+    std::ofstream out_json(test_json_path);
+    out_json << "{\n  \"N\": 99,\n  \"E_star\": 10,\n  \"levels\": [\n"
+             << "    {\n      \"E0\": 14,\n      \"orbits\": [ {\"canonical_id\": \"0x1A\", \"sd_hit_fraction\": 0.001} ]\n    },\n"
+             << "    {\n      \"E0\": 18,\n      \"orbits\": [ {\"canonical_id\": \"0x2B\", \"sd_hit_fraction\": 0.002} ]\n    }\n"
+             << "  ]\n}\n";
+    out_json.close();
+
+    std::string json_seed_dir = "data_raw/test_seeds_json";
+    std::filesystem::remove_all(json_seed_dir);
+    TrapsConfig json_cfg;
+    json_cfg.benchmark_trap_count = 0;
+    json_cfg.max_energy_ranks = 2;
+    json_cfg.minima_cache_dir = json_seed_dir;
+    json_cfg.force_regenerate_traps = false;
+
+    auto json_traps = connector.prepare_traps(99, json_cfg, 42, false, true);
+    assert(json_traps.size() == 2);
+    assert(json_traps[0].energy == 14);
+    assert(json_traps[1].energy == 18);
+    assert(std::filesystem::exists(json_seed_dir + "/seeds_N99.csv"));
+    std::filesystem::remove(test_json_path);
+    std::filesystem::remove_all(json_seed_dir);
+    std::cout << "  --> Exhaustive JSON auto-population fallback test: PASSED\n";
+
     // Clean up temporary test files
     std::filesystem::remove_all("data_raw/test_cache");
     std::filesystem::remove_all("data_raw/test_connector_out");
@@ -271,6 +308,7 @@ int main() {
     std::filesystem::remove_all("figures/test_n6");
     std::filesystem::remove_all(test_fmt_dir);
     std::filesystem::remove_all(auto_seed_dir);
+    std::filesystem::remove_all(json_seed_dir);
 
     std::cout << "=====================================================\n";
     std::cout << "  ALL CONNECTOR TESTS PASSED SUCCESSFULLY!           \n";

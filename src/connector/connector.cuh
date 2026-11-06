@@ -193,6 +193,78 @@ public:
         return "";
     }
 
+    static std::string find_exhaustive_json(int n) {
+        namespace fs = std::filesystem;
+        std::string n_str = std::to_string(n);
+        std::vector<std::string> candidate_paths = {
+            "data_processed/exhaustive_minima_n" + n_str + ".json",
+            "../data_processed/exhaustive_minima_n" + n_str + ".json",
+            "data_processed/exhaustive_minima_N" + n_str + ".json",
+            "../data_processed/exhaustive_minima_N" + n_str + ".json"
+        };
+        for (const auto& p : candidate_paths) {
+            try {
+                if (fs::exists(p) && fs::is_regular_file(p) && fs::file_size(p) > 0) {
+                    return p;
+                }
+            } catch (...) {}
+        }
+        return "";
+    }
+
+    static std::vector<MinimumFamily> load_from_exhaustive_json(const std::string& json_path, int n, size_t max_ranks = 2) {
+        (void)n;
+        std::vector<MinimumFamily> families;
+        std::ifstream in(json_path);
+        if (!in.is_open()) return families;
+
+        std::string line;
+        int64_t cur_energy = 0;
+        size_t level_count = 0;
+        bool in_level = false;
+        bool in_orbit = false;
+        MinimumFamily current_fam;
+
+        while (std::getline(in, line)) {
+            if (line.find("\"E0\":") != std::string::npos) {
+                auto pos = line.find(":");
+                cur_energy = std::stoll(line.substr(pos + 1));
+                level_count++;
+                if (max_ranks > 0 && level_count > max_ranks) {
+                    break; // Stop reading once max_ranks levels are captured
+                }
+                in_level = true;
+            } else if (in_level) {
+                if (line.find("\"canonical_id\":") != std::string::npos) {
+                    auto first = line.find("\"0x");
+                    if (first == std::string::npos) first = line.find("\"0X");
+                    if (first != std::string::npos) {
+                        auto last = line.find("\"", first + 1);
+                        std::string hex_str = line.substr(first + 1, last - first - 1);
+                        uint64_t bits = std::stoull(hex_str, nullptr, 16);
+                        current_fam.canonical_state = SpinState{bits};
+                        current_fam.sample_state = SpinState{bits};
+                        current_fam.energy = cur_energy;
+                        current_fam.times_visited = 1;
+                        current_fam.evals_to_first_find = 0;
+                        in_orbit = true;
+                    }
+                } else if (in_orbit && line.find("\"sd_hit_fraction\":") != std::string::npos) {
+                    auto pos = line.find(":");
+                    try {
+                        double frac = std::stod(line.substr(pos + 1));
+                        current_fam.times_visited = std::max<size_t>(1, std::round(frac * 100000.0));
+                    } catch (...) {}
+                } else if (in_orbit && line.find("}") != std::string::npos) {
+                    current_fam.id = families.size() + 1;
+                    families.push_back(current_fam);
+                    in_orbit = false;
+                }
+            }
+        }
+        return families;
+    }
+
     // ------------------------------------------------------------------------
     // Step 1: Discover or Load Traps (Local Minima Basins)
     // ------------------------------------------------------------------------
@@ -226,6 +298,43 @@ public:
                 }
             } else if (verbose) {
                 std::cout << "[Connector] Cache file empty. Regenerating...\n";
+            }
+        }
+
+        // If CSV seeds absent, fall back to exact exhaustive search dataset (data_processed/exhaustive_minima_n*.json)
+        if (!cache_loaded && !traps_cfg.force_regenerate_traps) {
+            std::string json_file = find_exhaustive_json(n);
+            if (!json_file.empty()) {
+                if (verbose) {
+                    std::cout << "[Connector] Found exhaustive minima dataset at: " << json_file << "\n";
+                }
+                families = load_from_exhaustive_json(json_file, n, traps_cfg.max_energy_ranks);
+                if (!families.empty()) {
+                    cache_loaded = true;
+                    if (verbose) {
+                        std::cout << "[Connector] Loaded " << families.size()
+                                  << " seeds across the first " << traps_cfg.max_energy_ranks
+                                  << " exhaustive energy levels from JSON.\n";
+                    }
+                    // Automatically populate seeds/seeds_N{n}.csv cache for future runs
+                    std::string seeds_dir = resolve_seeds_dir(traps_cfg.minima_cache_dir);
+                    try {
+                        std::filesystem::create_directories(seeds_dir);
+                        std::string save_path = (std::filesystem::path(seeds_dir) /
+                                                 ("seeds_N" + std::to_string(n) + ".csv")).string();
+                        ClassicalRunMetadata meta;
+                        meta.n = n;
+                        meta.seed = seed;
+                        meta.algorithm_name = "Exhaustive Minima (Bottom " + std::to_string(traps_cfg.max_energy_ranks) + " Ranks)";
+                        meta.total_starts = 100000;
+                        meta.total_evals = 0;
+                        meta.device_name = "Host CPU (Exhaustive Minima)";
+                        ClassicalLogger::export_to_csv(save_path, families, meta);
+                        if (verbose) {
+                            std::cout << "[Connector] Populated seeds cache from exhaustive results to: " << save_path << "\n";
+                        }
+                    } catch (...) {}
+                }
             }
         }
 
